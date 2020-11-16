@@ -9,10 +9,21 @@ import (
 	"uk.ac.bris.cs/gameoflife/util"
 )
 
-type ioChannels struct {
-	command <-chan ioCommand
-	idle    chan<- bool
 
+
+/*
+
+	Reading an image:
+	first, send an ioInput command down the command channel
+	next, send the filename down the filename channel
+
+	the image is sent row by row down the input channel 
+
+*/
+type ioChannels struct {
+	command <-chan ioCommand  // read only 
+	idle    chan<- bool       // set only 
+ 
 	filename <-chan string
 	output   <-chan uint8
 	input    chan<- uint8

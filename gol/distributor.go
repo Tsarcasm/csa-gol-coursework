@@ -3,6 +3,8 @@ package gol
 import (
 	"strconv"
 
+	"sync"
+
 	"uk.ac.bris.cs/gameoflife/util"
 )
 
@@ -12,6 +14,12 @@ type distributorChannels struct {
 	ioIdle     <-chan bool
 	ioFilename chan<- string
 	ioInput    <-chan uint8
+}
+
+type Fragment struct {
+	startRow int
+	endRow   int
+	cells    [][]bool
 }
 
 // distributor divides the work between workers and interacts with other goroutines.
@@ -27,18 +35,52 @@ func distributor(p Params, c distributorChannels) {
 
 	//Load the image
 	c.ioCommand <- ioInput
-	// Filename is width x height
 	filename := strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight)
 	println("Reading in file", filename)
 	c.ioFilename <- filename
-	// Read in the data
+	// Covnert image to grid
 	gridFromFileInput(grid, p.ImageHeight, p.ImageWidth, c.ioInput, c.events)
-
 	c.events <- TurnComplete{0}
-	// turn++
-	// After the setup turn increment to turn = 1
+
+	// Make a grid buffer to store the next grid state into
+
+	gridFragments := make(chan Fragment, p.Threads)
+
+	println("frag height", p.ImageHeight/p.Threads)
+	var wg sync.WaitGroup
+	// Now we can do the game loop
 	for turn := 1; turn <= p.Turns; turn++ {
-		grid = doTurn(grid, turn, c.events)
+		gridBuffer := make([][]bool, p.ImageHeight)
+		for row := 0; row < p.ImageHeight; row++ {
+			gridBuffer[row] = make([]bool, p.ImageWidth)
+		}
+		fragHeight := p.ImageHeight / p.Threads
+		for thread := 0; thread < p.Threads; thread++ {
+			start := thread * fragHeight
+			end := (thread + 1) * fragHeight
+			if thread == p.Threads-1 {
+				end = p.ImageHeight
+			}
+			if turn == 1 {
+				println(start, end)
+			}
+			go turnThread(grid, turn, c.events, start, end, gridFragments)
+		}
+
+		for thread := 0; thread < p.Threads; thread++ {
+			fragment := <-gridFragments
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for row := fragment.startRow; row < fragment.endRow; row++ {
+					for col := 0; col < p.ImageWidth; col++ {
+						gridBuffer[row][col] = fragment.cells[row-fragment.startRow][col]
+					}
+				}
+			}()
+		}
+		wg.Wait()
+		grid = gridBuffer
 		c.events <- TurnComplete{turn}
 	}
 	// println(makeAliveCells(grid))
@@ -47,11 +89,6 @@ func distributor(p Params, c distributorChannels) {
 		p.Turns,
 		makeAliveCells(grid),
 	}
-
-	// TODO: Execute all turns of the Game of Life.
-	// TODO: Send correct Events when required, e.g. CellFlipped, TurnComplete and FinalTurnComplete.
-	//		 See event.go for a list of all events.
-
 	// Make sure that the Io has finished any output before exiting.
 	c.ioCommand <- ioCheckIdle
 	<-c.ioIdle
@@ -59,6 +96,39 @@ func distributor(p Params, c distributorChannels) {
 	c.events <- StateChange{p.Turns, Quitting}
 	// Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
 	close(c.events)
+}
+
+func turnThread(grid [][]bool, turn int, events chan<- Event, startRow, endRow int, fragments chan<- Fragment) {
+	width := len(grid[0])
+	gridFragment := Fragment{
+		startRow,
+		endRow,
+		make([][]bool, endRow-startRow),
+	}
+
+	// Iterate over each cell
+	for row := startRow; row < endRow; row++ {
+
+		gridFragment.cells[row-startRow] = make([]bool, width)
+		for col := 0; col < width; col++ {
+
+			// Calculate the next cell state
+			newCell := nextCellState(col, row, grid)
+
+			// If the cell has flipped then raise an event
+			if newCell != grid[row][col] {
+				events <- CellFlipped{
+					CompletedTurns: turn,
+					Cell:           util.Cell{X: col, Y: row},
+				}
+			}
+
+			// Update the value of the new cell
+			gridFragment.cells[row-startRow][col] = newCell
+
+		}
+	}
+	fragments <- gridFragment
 }
 
 //Populate a grid from a file input channel, sending events on cells set to alive
@@ -146,35 +216,6 @@ func getNeighbours(x int, y int, grid [][]bool) int {
 	}
 
 	return numNeighbours
-}
-
-func doTurn(grid [][]bool, turn int, events chan<- Event) [][]bool {
-	height := len(grid)
-	width := len(grid[0])
-	newGrid := make([][]bool, height)
-
-	// Iterate over each cell
-	for row := 0; row < height; row++ {
-		newGrid[row] = make([]bool, width)
-		for col := 0; col < width; col++ {
-
-			// Calculate the next cell state
-			newCell := nextCellState(col, row, grid)
-
-			// If the cell has flipped then raise an event
-			if newCell != grid[row][col] {
-				events <- CellFlipped{
-					CompletedTurns: turn,
-					Cell:           util.Cell{X: col, Y: row},
-				}
-			}
-
-			// Update the value of the new cell
-			newGrid[row][col] = newCell
-
-		}
-	}
-	return newGrid
 }
 
 // returns the alive cells in the grid

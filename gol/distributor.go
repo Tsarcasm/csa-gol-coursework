@@ -26,7 +26,7 @@ type Fragment struct {
 // distributor divides the work between workers and interacts with other goroutines.
 func distributor(p Params, c distributorChannels) {
 	//grid[row][column]
-	ticker := time.NewTicker(2000 * time.Millisecond)
+	ticker := time.NewTicker(2 * time.Second)
 	grid := make([][]bool, p.ImageHeight)
 
 	// Make a column array for each row
@@ -86,7 +86,10 @@ func distributor(p Params, c distributorChannels) {
 		c.events <- TurnComplete{turn}
 		select {
 		case <-ticker.C:
-			c.events <- AliveCellsCount{len(makeAliveCells(grid)), turn}
+			c.events <- AliveCellsCount{
+				turn,
+				len(makeAliveCells(grid)),
+			}
 		default:
 
 		}

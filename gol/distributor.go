@@ -15,6 +15,8 @@ type distributorChannels struct {
 	ioIdle     <-chan bool
 	ioFilename chan<- string
 	ioInput    <-chan uint8
+	ioOutput   chan<- uint8
+	keyCommand <-chan keyCommand
 }
 
 type Fragment struct {
@@ -49,14 +51,20 @@ func distributor(p Params, c distributorChannels) {
 
 	println("frag height", p.ImageHeight/p.Threads)
 	var wg sync.WaitGroup
+
 	// Now we can do the game loop
-	for turn := 1; turn <= p.Turns; turn++ {
+	turn := 1
+GameLoop:
+	for ; turn <= p.Turns; turn++ {
+		// Make a new grid
 		gridBuffer := make([][]bool, p.ImageHeight)
 		for row := 0; row < p.ImageHeight; row++ {
 			gridBuffer[row] = make([]bool, p.ImageWidth)
 		}
+		// Calculate the number of rows each worker thread should use
 		fragHeight := p.ImageHeight / p.Threads
 		for thread := 0; thread < p.Threads; thread++ {
+			// Rows to process turns for
 			start := thread * fragHeight
 			end := (thread + 1) * fragHeight
 			if thread == p.Threads-1 {
@@ -65,12 +73,16 @@ func distributor(p Params, c distributorChannels) {
 			if turn == 1 {
 				println(start, end)
 			}
+			// Spawn a new worker thread
 			go turnThread(grid, turn, c.events, start, end, gridFragments)
 		}
 
+		// Get the result of each thread
 		for thread := 0; thread < p.Threads; thread++ {
 			fragment := <-gridFragments
 			wg.Add(1)
+
+			// Stitch the thread results back into the grid
 			go func() {
 				defer wg.Done()
 				for row := fragment.startRow; row < fragment.endRow; row++ {
@@ -90,24 +102,54 @@ func distributor(p Params, c distributorChannels) {
 				turn,
 				len(makeAliveCells(grid)),
 			}
-		default:
+		case keypress := <-c.keyCommand:
+			switch keypress {
+			case save:
+				saveGrid(grid, turn, p, c)
+			case quit:
+				break GameLoop
+			case pause:
+				//Wait for another pause instruction
+				println("Pausing on turn", turn)
+				for <-c.keyCommand != pause {
+				}
+				println("Continuing")
+			}
 
+		default:
+			// Don't wait for an instruction, keep going
 		}
 
 	}
-	// println(makeAliveCells(grid))
+
+	// If we've finished all turns ensure turns = the last turn we did
+	if turn > p.Turns {
+		turn = p.Turns
+	}
 
 	c.events <- FinalTurnComplete{
-		p.Turns,
+		turn,
 		makeAliveCells(grid),
 	}
+
+	// Finally, save the image to a new file
+	saveGrid(grid, turn, p, c)
+
 	// Make sure that the Io has finished any output before exiting.
 	c.ioCommand <- ioCheckIdle
 	<-c.ioIdle
 
-	c.events <- StateChange{p.Turns, Quitting}
+	c.events <- StateChange{turn, Quitting}
 	// Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
 	close(c.events)
+}
+
+func saveGrid(grid [][]bool, turn int, p Params, c distributorChannels) {
+	c.ioCommand <- ioOutput
+	filename := strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight) + "x" + strconv.Itoa(turn)
+	println("Saving to file", filename)
+	c.ioFilename <- filename
+	gridToFileOutput(grid, p.ImageHeight, p.ImageWidth, c.ioOutput)
 }
 
 func turnThread(grid [][]bool, turn int, events chan<- Event, startRow, endRow int, fragments chan<- Fragment) {
@@ -158,6 +200,19 @@ func gridFromFileInput(grid [][]bool, height, width int, fileInput <-chan uint8,
 					CompletedTurns: 0,
 					Cell:           util.Cell{X: col, Y: row},
 				}
+			}
+		}
+	}
+}
+
+func gridToFileOutput(grid [][]bool, height, width int, fileOutput chan<- uint8) {
+	for row := 0; row < height; row++ {
+		for col := 0; col < width; col++ {
+			// If true send 1, else send 0
+			if grid[row][col] {
+				fileOutput <- 1
+			} else {
+				fileOutput <- 0
 			}
 		}
 	}

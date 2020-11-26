@@ -16,7 +16,7 @@ type distributorChannels struct {
 	ioFilename chan<- string
 	ioInput    <-chan uint8
 	ioOutput   chan<- uint8
-	keyCommand <-chan keyCommand
+	signals <-chan signals
 }
 
 type Fragment struct {
@@ -102,8 +102,8 @@ GameLoop:
 				turn,
 				len(makeAliveCells(grid)),
 			}
-		case keypress := <-c.keyCommand:
-			switch keypress {
+		case signal := <-c.signals:
+			switch signal {
 			case save:
 				saveGrid(grid, turn, p, c)
 			case quit:
@@ -111,7 +111,7 @@ GameLoop:
 			case pause:
 				//Wait for another pause instruction
 				println("Pausing on turn", turn)
-				for <-c.keyCommand != pause {
+				for <-c.signals != pause {
 				}
 				println("Continuing")
 			}

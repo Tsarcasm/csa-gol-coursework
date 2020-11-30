@@ -1,10 +1,9 @@
 package gol
 
 import (
-	"encoding/gob"
 	"net"
-	"reflect"
-
+	"net/rpc"
+	"os"
 	"strconv"
 
 	"uk.ac.bris.cs/gameoflife/stubs"
@@ -20,14 +19,48 @@ type distributorChannels struct {
 	signals    <-chan stubs.Signals
 }
 
-func init() {
-	gob.RegisterName("AliveCellsCount", &AliveCellsCount{})
-	gob.RegisterName("ImageOutputComplete", &ImageOutputComplete{})
-	gob.RegisterName("StateChange", &StateChange{})
-	gob.RegisterName("CellFlipped", &CellFlipped{})
-	gob.RegisterName("TurnComplete", &TurnComplete{})
-	gob.RegisterName("FinalTurnComplete", &FinalTurnComplete{})
-	gob.RegisterName("BoardSave", &BoardSave{})
+type Client struct {
+	p     Params
+	c     distributorChannels
+	state stubs.State
+}
+
+// Todo: improve the comments here
+
+// The server calls this to report a change in game state
+func (c *Client) GameStateChange(req stubs.StateChangeReport, res *stubs.ClientResponse) (err error) {
+	println("Received state change report")
+	c.state = req.New
+	return
+}
+
+// The server calls this after the final turn is completed
+func (c *Client) FinalTurnComplete(req stubs.SaveBoardRequest, res *stubs.ClientResponse) (err error) {
+	println("Final turn complete")
+	saveGrid(req.Board, req.CompletedTurns, c.p, c.c)
+
+	c.c.ioCommand <- ioCheckIdle
+	<-c.c.ioIdle
+
+	// c.events <- StateChange{turn, Quitting}
+	// Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
+	close(c.c.events)
+	os.Exit(0)
+	return
+}
+
+// The server calls this when it receives a signal to save the board
+func (c *Client) SaveBoard(req stubs.SaveBoardRequest, res *stubs.ClientResponse) (err error) {
+	println("Received save board request")
+	go saveGrid(req.Board, req.CompletedTurns, c.p, c.c)
+	return
+}
+
+// The server calls this every 2 seconds to report how many cells are alive 
+func (c *Client) ReportAliveCells(req stubs.AliveCellsReport, res *stubs.ClientResponse) (err error) {
+	println("Received alive cells report")
+	c.c.events <- AliveCellsCount{CompletedTurns: req.CompletedTurns, CellsCount: req.NumAlive}
+	return
 }
 
 // distributor divides the work between workers and interacts with other goroutines.
@@ -49,94 +82,44 @@ func distributor(p Params, c distributorChannels) {
 	// Covnert image to grid
 	gridFromFileInput(grid, p.ImageHeight, p.ImageWidth, c.ioInput, c.events)
 
-	// Open a connection to the server
-	conn, _ := net.Dial("tcp", "localhost:8030")
+	// Register our RPC client
+	rpc.Register(&Client{p: p, c: c, state: stubs.Executing})
+	listener, _ := net.Listen("tcp", "localhost:8020")
+	go rpc.Accept(listener)
+	defer listener.Close()
 
-	encoder := gob.NewEncoder(conn)
-	decoder := gob.NewDecoder(conn)
+	// Connect to the RPC server
+	server, _ := rpc.Dial("tcp", "localhost:8030")
+	response := new(stubs.ServerResponse)
+	// Ask the server to start a game
+	err := server.Call(stubs.ServerStartGame, stubs.StartGameRequest{
+		ClientAddress: "localhost:8030",
+		Height:        p.ImageHeight,
+		Width:         p.ImageWidth,
+		MaxTurns:      p.Turns,
+		Board:         grid,
+	}, response)
 
-	msg := stubs.BoardMsg{
-		Height:   p.ImageHeight,
-		Width:    p.ImageWidth,
-		MaxTurns: p.Turns,
-		Board:    grid,
+	if err != nil {
+		println("Error connecting:", err.Error())
 	}
 
-	// Send the boardmsg
-	encoder.Encode(msg)
-
-	// Run the goroutine to handle sending signals
-	go sendSignals(encoder, c)
-
-	// Loop and handle events
-ConnectionLoop:
-	for {
-		var response Event
-		err := decoder.Decode(&response)
-		if err != nil {
-			print("Decode Error!", err.Error())
-			break
-		}
-
-		// We want to handle some specific events
-		// Such as a board save event
-		switch e := response.(type) {
-		case *BoardSave:
-			saveGrid(e, p, c)
-			// If this is the final turn output
-			if e.CompletedTurns == p.Turns {
-				break ConnectionLoop
-			}
-		// case *AliveCellsCount:
-		// 	c.events <- e.(AliveCellsCount)
-		// case *StateChange:
-		// 	c.events <- e.(StateChange)
-		// case *CellFlipped:
-		// 	c.events <- e.(CellFlipped)
-		// case *TurnComplete:
-		// 	c.events <- e.(TurnComplete)
-		// case *FinalTurnComplete:
-		// 	c.events <- e.(FinalTurnComplete)
-		default:
-			println(reflect.TypeOf(e.(Event)).String())
-			c.events <- e.(Event)
-			// println("Unhandled Event")
-		}
-
-		// // print("Received message")
-	}
-
-	// c.events <- TurnComplete{0}
-
-	// Make a grid buffer to store the next grid state into
-
-	// println("frag height", p.ImageHeight/p.Threads)
-
-	// Finally, save the image to a new file
-	// saveGrid(grid, turn, p, c)
-
-	// Make sure that the Io has finished any output before exiting.
-	c.ioCommand <- ioCheckIdle
-	<-c.ioIdle
-
-	// c.events <- StateChange{turn, Quitting}
-	// Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
-	close(c.events)
-}
-
-func sendSignals(encoder *gob.Encoder, c distributorChannels) {
+	// Forward keypresses to the server
 	for {
 		signal := <-c.signals
-		encoder.Encode(signal)
+		err = server.Call(stubs.ServerRegisterKeypress, stubs.KeypressRequest{Key: signal}, response)
+		if err != nil {
+			println("Error sending keypress to server:", err.Error())
+		}
 	}
 }
 
-func saveGrid(saveEvent *BoardSave, p Params, c distributorChannels) {
+func saveGrid(grid [][]bool, completedTurns int, p Params, c distributorChannels) {
 	c.ioCommand <- ioOutput
-	filename := strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight) + "x" + strconv.Itoa(saveEvent.CompletedTurns)
+	filename := strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight) + "x" + strconv.Itoa(completedTurns)
 	println("Saving to file", filename)
 	c.ioFilename <- filename
-	gridToFileOutput(saveEvent.Board, p.ImageHeight, p.ImageWidth, c.ioOutput)
+	gridToFileOutput(grid, p.ImageHeight, p.ImageWidth, c.ioOutput)
 }
 
 //Populate a grid from a file input channel, sending events on cells set to alive

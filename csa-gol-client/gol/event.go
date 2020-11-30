@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"uk.ac.bris.cs/gameoflife/util"
+	"uk.ac.bris.cs/gameoflife/stubs"
 )
 
 // Event represents any Game of Life event that needs to be communicated to the user.
@@ -29,20 +30,12 @@ type ImageOutputComplete struct { // implements Event
 	Filename       string
 }
 
-// State represents a change in the state of execution.
-type State int
-
-const (
-	Paused State = iota
-	Executing
-	Quitting
-)
 
 // StateChange is an Event notifying the user about the change of state of execution.
 // This Event should be sent every time the execution is paused, resumed or quit.
 type StateChange struct { // implements Event
 	CompletedTurns int
-	NewState       State
+	NewState       stubs.State
 }
 
 // CellFlipped is an Event notifying the GUI about a change of state of a single cell.
@@ -75,20 +68,7 @@ type BoardSave struct {
 	Board          [][]bool
 }
 
-// String methods allow the different types of Events and States to be printed.
 
-func (state State) String() string {
-	switch state {
-	case Paused:
-		return "Paused"
-	case Executing:
-		return "Executing"
-	case Quitting:
-		return "Quitting"
-	default:
-		return "Incorrect State"
-	}
-}
 
 func (event StateChange) String() string {
 	return fmt.Sprintf("%v", event.NewState)

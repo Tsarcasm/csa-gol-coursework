@@ -53,14 +53,14 @@ func distributor(p Params, c distributorChannels) {
 	var wg sync.WaitGroup
 
 	// Now we can do the game loop
+	gridBuffer := make([][]bool, p.ImageHeight)
+	for row := 0; row < p.ImageHeight; row++ {
+		gridBuffer[row] = make([]bool, p.ImageWidth)
+	}
 	turn := 1
 GameLoop:
 	for ; turn <= p.Turns; turn++ {
 		// Make a new grid
-		gridBuffer := make([][]bool, p.ImageHeight)
-		for row := 0; row < p.ImageHeight; row++ {
-			gridBuffer[row] = make([]bool, p.ImageWidth)
-		}
 		// Calculate the number of rows each worker thread should use
 		fragHeight := p.ImageHeight / p.Threads
 		for thread := 0; thread < p.Threads; thread++ {
@@ -94,7 +94,12 @@ GameLoop:
 
 		}
 		wg.Wait()
-		grid = gridBuffer
+
+		// Copy the grid buffer over to the input grid
+		for row := 0; row < p.ImageHeight; row++ {
+			copy(grid[row], gridBuffer[row])
+		}
+		
 		c.events <- TurnComplete{turn}
 		select {
 		case <-ticker.C:

@@ -2,6 +2,7 @@ package gol
 
 import (
 	"fmt"
+
 	"uk.ac.bris.cs/gameoflife/util"
 )
 
@@ -67,6 +68,13 @@ type FinalTurnComplete struct {
 	Alive          []util.Cell
 }
 
+// todo description
+// Responds with board data for a save
+type BoardSave struct {
+	CompletedTurns int
+	Board          [][]bool
+}
+
 // String methods allow the different types of Events and States to be printed.
 
 func (state State) String() string {
@@ -127,6 +135,14 @@ func (event FinalTurnComplete) String() string {
 }
 
 func (event FinalTurnComplete) GetCompletedTurns() int {
+	return event.CompletedTurns
+}
+
+func (event BoardSave) String() string {
+	return fmt.Sprintf("")
+}
+
+func (event BoardSave) GetCompletedTurns() int {
 	return event.CompletedTurns
 }
 

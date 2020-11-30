@@ -1,9 +1,5 @@
 package stubs
 
-import (
-	"uk.ac.bris.cs/gameoflife/util"
-)
-
 type BoardMsg struct {
 	Height   int
 	Width    int
@@ -12,20 +8,20 @@ type BoardMsg struct {
 	Board [][]bool
 }
 
-type UpdateMessage struct {
-	CompletedTurns  int
-	State           int
-	AliveCellsCount int
-	AliveCells      []util.Cell
-	Board           [][]bool
-}
+// type UpdateMessage struct {
+// 	CompletedTurns  int
+// 	State           int
+// 	AliveCellsCount int
+// 	AliveCells      []util.Cell
+// 	Board           [][]bool
+// }
 
-// StateChange is an Event notifying the user about the change of state of execution.
-// This Event should be sent every time the execution is paused, resumed or quit.
-type StateChangeMsg struct { // implements Event
-	CompletedTurns int
-	NewState       int
-}
+// // StateChange is an Event notifying the user about the change of state of execution.
+// // This Event should be sent every time the execution is paused, resumed or quit.
+// type StateChangeMsg struct { // implements Event
+// 	CompletedTurns int
+// 	NewState       int
+// }
 
 type Fragment struct {
 	StartRow int

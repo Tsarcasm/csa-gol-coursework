@@ -1,4 +1,4 @@
-package server
+package main
 
 import (
 	// "bufio"
@@ -10,6 +10,16 @@ import (
 	"uk.ac.bris.cs/gameoflife/gol"
 	"uk.ac.bris.cs/gameoflife/stubs"
 )
+
+func init() {
+	gob.RegisterName("AliveCellsCount", &gol.AliveCellsCount{})
+	gob.RegisterName("ImageOutputComplete", &gol.ImageOutputComplete{})
+	gob.RegisterName("StateChange", &gol.StateChange{})
+	gob.RegisterName("CellFlipped", &gol.CellFlipped{})
+	gob.RegisterName("TurnComplete", &gol.TurnComplete{})
+	gob.RegisterName("FinalTurnComplete", &gol.FinalTurnComplete{})
+	gob.RegisterName("BoardSave", &gol.BoardSave{})
+}
 
 /*
 
@@ -53,46 +63,47 @@ func signalReceiver(decoder *gob.Decoder, sigchan chan<- stubs.Signals) {
 	}
 }
 
-func clientUpdater(encoder *gob.Encoder, eventChan <-chan gol.Event, saveChan <-chan boardState) {
+func clientUpdater(encoder *gob.Encoder, eventChan <-chan gol.Event) {
 	for {
 		select {
 		case event := <-eventChan:
-			switch e := event.(type) {
-			case gol.AliveCellsCount:
-				encoder.Encode(stubs.UpdateMessage{
-					CompletedTurns:  e.CompletedTurns,
-					AliveCellsCount: e.CellsCount,
-					AliveCells:      nil,
-					State:           0,
-					Board:           nil,
-				})
-			case gol.FinalTurnComplete:
-				encoder.Encode(stubs.UpdateMessage{
-					CompletedTurns:  e.CompletedTurns,
-					AliveCellsCount: len(e.Alive),
-					AliveCells:      e.Alive,
-					State:           0,
-					Board:           nil,
-				})
-			case gol.StateChange:
-				encoder.Encode(stubs.UpdateMessage{
-					CompletedTurns:  e.CompletedTurns,
-					AliveCellsCount: 0,
-					AliveCells:      nil,
-					State:           int(e.NewState),
-					Board:           nil,
-				})
-			case gol.TurnComplete:
-				// Don't do anything here
+			err := encoder.Encode(&event)
+			if err != nil {
+				panic(err)
 			}
-		case board := <-saveChan:
-			encoder.Encode(stubs.UpdateMessage{
-				CompletedTurns:  board.turn,
-				AliveCellsCount: 0,
-				AliveCells:      nil,
-				State:           0,
-				Board:           board.grid,
-			})
+			// // print("Turn", event.GetCompletedTurns(), ", ")
+			// switch e := event.(type) {
+			// case gol.AliveCellsCount:
+			// 	println("Sending AliveCellsCount")
+			// 	encoder.Encode(stubs.UpdateMessage{
+			// 		CompletedTurns:  e.CompletedTurns,
+			// 		AliveCellsCount: e.CellsCount,
+			// 		AliveCells:      nil,
+			// 		State:           -1,
+			// 		Board:           nil,
+			// 	})
+			// case gol.FinalTurnComplete:
+			// 	println("Sending FinalTurnComplete")
+			// 	encoder.Encode(stubs.UpdateMessage{
+			// 		CompletedTurns:  e.CompletedTurns,
+			// 		AliveCellsCount: -1,
+			// 		AliveCells:      e.Alive,
+			// 		State:           -1,
+			// 		Board:           nil,
+			// 	})
+			// case gol.StateChange:
+			// 	println("Sending StateChange")
+			// 	encoder.Encode(stubs.UpdateMessage{
+			// 		CompletedTurns:  e.CompletedTurns,
+			// 		AliveCellsCount: -1,
+			// 		AliveCells:      nil,
+			// 		State:           int(e.NewState),
+			// 		Board:           nil,
+			// 	})
+			// case gol.TurnComplete:
+			// case gol.CellFlipped:
+			// 	// Don't do anything here
+
 		}
 	}
 }
@@ -108,6 +119,8 @@ func handleClient(client net.Conn) {
 	if err != nil {
 		log.Fatal("decode error:", err)
 	}
+	// We now have a board
+	println("Client uploaded a board")
 
 	p := engineParams{
 		boardHeight: msg.Height,
@@ -116,18 +129,18 @@ func handleClient(client net.Conn) {
 		numThreads:  1,
 	}
 
-	eventChannel := make(chan gol.Event, 10)
-	saveChannel := make(chan boardState)
-	signals := make(chan stubs.Signals, 10)
+	eventChannel := make(chan gol.Event, 1000)
+	// saveChannel := make(chan boardState)
+	signals := make(chan stubs.Signals, 1000)
 
 	c := engineChannels{
-		events:   eventChannel,
-		saveChan: saveChannel,
-		signals:  signals,
+		events: eventChannel,
+		// saveChan: saveChannel,
+		signals: signals,
 	}
 
 	go signalReceiver(decoder, signals)
-	go clientUpdater(encoder, eventChannel, saveChannel)
+	go clientUpdater(encoder, eventChannel)
 	// Run the engine loop synchronously
 	// When the engine loop finishes we need to close the connection
 	engineLoop(msg.Board, p, c)
@@ -135,6 +148,7 @@ func handleClient(client net.Conn) {
 }
 
 func main() {
+
 	// Read in the network port we should listen on, from the commandline argument.
 	// Default to port 8030
 	// portPtr := flag.String("port", ":8030", "port to listen on")

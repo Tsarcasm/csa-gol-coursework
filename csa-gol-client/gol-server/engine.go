@@ -1,4 +1,4 @@
-package server
+package main
 
 import (
 	"sync"
@@ -10,9 +10,9 @@ import (
 )
 
 type engineChannels struct {
-	events   chan<- gol.Event
-	saveChan chan<- boardState
-	signals  <-chan stubs.Signals
+	events chan<- gol.Event
+	// saveChan chan<- boardState
+	signals <-chan stubs.Signals
 }
 
 type engineParams struct {
@@ -43,7 +43,7 @@ func engineLoop(grid [][]bool, p engineParams, c engineChannels) {
 	turn := 1
 GameLoop:
 	for ; turn <= p.maxTurns; turn++ {
-		// Make a new grid
+		// Make a new grid buffer
 		gridBuffer := make([][]bool, p.boardHeight)
 		for row := 0; row < p.boardHeight; row++ {
 			gridBuffer[row] = make([]bool, p.boardWidth)
@@ -92,7 +92,10 @@ GameLoop:
 		case signal := <-c.signals:
 			switch signal {
 			case stubs.Save:
-				c.saveChan <- boardState{grid, turn}
+				c.events <- gol.BoardSave{
+					CompletedTurns: turn,
+					Board:          grid,
+				}
 			case stubs.Quit:
 				break GameLoop
 			case stubs.Pause:
@@ -130,7 +133,10 @@ GameLoop:
 	}
 
 	// Finally, save the image to a new file
-	c.saveChan <- boardState{grid, turn}
+	c.events <- gol.BoardSave{
+		CompletedTurns: turn,
+		Board:          grid,
+	}
 }
 
 func turnThread(grid [][]bool, turn int, events chan<- gol.Event, startRow, endRow int, fragments chan<- stubs.Fragment) {

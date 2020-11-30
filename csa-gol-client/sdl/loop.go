@@ -2,6 +2,8 @@ package sdl
 
 import (
 	"fmt"
+	// "reflect"
+
 	"github.com/veandco/go-sdl2/sdl"
 	"uk.ac.bris.cs/gameoflife/gol"
 )
@@ -30,13 +32,14 @@ sdlLoop:
 		select {
 		case event, ok := <-events:
 			if !ok {
+				println("Break!")
 				w.Destroy()
 				break sdlLoop
 			}
 			switch e := event.(type) {
-			case gol.CellFlipped:
+			case *gol.CellFlipped:
 				w.FlipPixel(e.Cell.X, e.Cell.Y)
-			case gol.TurnComplete:
+			case *gol.TurnComplete:
 				w.RenderFrame()
 			default:
 				if len(event.String()) > 0 {

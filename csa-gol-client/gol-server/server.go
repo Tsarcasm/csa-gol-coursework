@@ -21,15 +21,6 @@ func init() {
 	gob.RegisterName("BoardSave", &gol.BoardSave{})
 }
 
-/*
-
- Connection sequence:
- - connect
- - send BoardMsg
-
-
-*/
-
 func handleError(err error) {
 	// TODO: all
 	// Deal with an error event.
@@ -56,9 +47,9 @@ func signalReceiver(decoder *gob.Decoder, sigchan chan<- stubs.Signals) {
 		// First, decode the BoardMsg
 		err := decoder.Decode(&msg)
 		if err != nil {
-			log.Fatal("decode error:", err)
+			println("Error decoding signal: ", err.Error())
 		}
-		print("Received a signal from client:", msg)
+		println("Received a signal from client:", msg)
 		sigchan <- msg
 	}
 }
@@ -67,43 +58,10 @@ func clientUpdater(encoder *gob.Encoder, eventChan <-chan gol.Event) {
 	for {
 		select {
 		case event := <-eventChan:
-			err := encoder.Encode(&event)
+			err := encoder.Encode(event.(gol.Event))
 			if err != nil {
-				panic(err)
+				println("Error sending events to client: ", err.Error())
 			}
-			// // print("Turn", event.GetCompletedTurns(), ", ")
-			// switch e := event.(type) {
-			// case gol.AliveCellsCount:
-			// 	println("Sending AliveCellsCount")
-			// 	encoder.Encode(stubs.UpdateMessage{
-			// 		CompletedTurns:  e.CompletedTurns,
-			// 		AliveCellsCount: e.CellsCount,
-			// 		AliveCells:      nil,
-			// 		State:           -1,
-			// 		Board:           nil,
-			// 	})
-			// case gol.FinalTurnComplete:
-			// 	println("Sending FinalTurnComplete")
-			// 	encoder.Encode(stubs.UpdateMessage{
-			// 		CompletedTurns:  e.CompletedTurns,
-			// 		AliveCellsCount: -1,
-			// 		AliveCells:      e.Alive,
-			// 		State:           -1,
-			// 		Board:           nil,
-			// 	})
-			// case gol.StateChange:
-			// 	println("Sending StateChange")
-			// 	encoder.Encode(stubs.UpdateMessage{
-			// 		CompletedTurns:  e.CompletedTurns,
-			// 		AliveCellsCount: -1,
-			// 		AliveCells:      nil,
-			// 		State:           int(e.NewState),
-			// 		Board:           nil,
-			// 	})
-			// case gol.TurnComplete:
-			// case gol.CellFlipped:
-			// 	// Don't do anything here
-
 		}
 	}
 }
@@ -144,7 +102,6 @@ func handleClient(client net.Conn) {
 	// Run the engine loop synchronously
 	// When the engine loop finishes we need to close the connection
 	engineLoop(msg.Board, p, c)
-
 }
 
 func main() {
@@ -162,7 +119,6 @@ func main() {
 		// Synchronously handle the client
 		// This will return when the client disconnects
 		handleClient(conn)
-
 	}
 
 }

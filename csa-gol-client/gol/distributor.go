@@ -3,6 +3,7 @@ package gol
 import (
 	"encoding/gob"
 	"net"
+	"reflect"
 
 	"strconv"
 
@@ -31,7 +32,6 @@ func init() {
 
 // distributor divides the work between workers and interacts with other goroutines.
 func distributor(p Params, c distributorChannels) {
-
 	//grid[row][column]
 	grid := make([][]bool, p.ImageHeight)
 
@@ -45,9 +45,11 @@ func distributor(p Params, c distributorChannels) {
 	filename := strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight)
 	println("Reading in file", filename)
 	c.ioFilename <- filename
+
 	// Covnert image to grid
 	gridFromFileInput(grid, p.ImageHeight, p.ImageWidth, c.ioInput, c.events)
 
+	// Open a connection to the server
 	conn, _ := net.Dial("tcp", "localhost:8030")
 
 	encoder := gob.NewEncoder(conn)
@@ -63,6 +65,11 @@ func distributor(p Params, c distributorChannels) {
 	// Send the boardmsg
 	encoder.Encode(msg)
 
+	// Run the goroutine to handle sending signals
+	go sendSignals(encoder, c)
+
+	// Loop and handle events
+ConnectionLoop:
 	for {
 		var response Event
 		err := decoder.Decode(&response)
@@ -71,32 +78,32 @@ func distributor(p Params, c distributorChannels) {
 			break
 		}
 
-		// // print("Received message")
+		// We want to handle some specific events
+		// Such as a board save event
 		switch e := response.(type) {
+		case *BoardSave:
+			saveGrid(e, p, c)
+			// If this is the final turn output
+			if e.CompletedTurns == p.Turns {
+				break ConnectionLoop
+			}
+		// case *AliveCellsCount:
+		// 	c.events <- e.(AliveCellsCount)
+		// case *StateChange:
+		// 	c.events <- e.(StateChange)
+		// case *CellFlipped:
+		// 	c.events <- e.(CellFlipped)
+		// case *TurnComplete:
+		// 	c.events <- e.(TurnComplete)
+		// case *FinalTurnComplete:
+		// 	c.events <- e.(FinalTurnComplete)
 		default:
-			// println(reflect.TypeOf(e).String())
-			c.events <- e
+			println(reflect.TypeOf(e.(Event)).String())
+			c.events <- e.(Event)
+			// println("Unhandled Event")
 		}
-		// println(reflect.TypeOf(*response).String())
-		// c.events <- response
-		// If they have sent us a board then we need to save
-		// if response.Board != nil {
-		// 	go saveGrid(response.Board, response.CompletedTurns, p, c)
-		// } else if response.State != -1 {
-		// 	// todo pause handling
-		// } else if response.AliveCellsCount != -1 {
-		// 	c.events <- AliveCellsCount{
-		// 		CompletedTurns: response.CompletedTurns,
-		// 		CellsCount:     response.AliveCellsCount,
-		// 	}
-		// } else if response.AliveCells != nil {
-		// 	// This is the final turn
-		// 	c.events <- FinalTurnComplete{
-		// 		CompletedTurns: response.CompletedTurns,
-		// 		Alive:          response.AliveCells,
-		// 	}
-		// }
 
+		// // print("Received message")
 	}
 
 	// c.events <- TurnComplete{0}
@@ -117,12 +124,19 @@ func distributor(p Params, c distributorChannels) {
 	close(c.events)
 }
 
-func saveGrid(grid [][]bool, turn int, p Params, c distributorChannels) {
+func sendSignals(encoder *gob.Encoder, c distributorChannels) {
+	for {
+		signal := <-c.signals
+		encoder.Encode(signal)
+	}
+}
+
+func saveGrid(saveEvent *BoardSave, p Params, c distributorChannels) {
 	c.ioCommand <- ioOutput
-	filename := strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight) + "x" + strconv.Itoa(turn)
+	filename := strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight) + "x" + strconv.Itoa(saveEvent.CompletedTurns)
 	println("Saving to file", filename)
 	c.ioFilename <- filename
-	gridToFileOutput(grid, p.ImageHeight, p.ImageWidth, c.ioOutput)
+	gridToFileOutput(saveEvent.Board, p.ImageHeight, p.ImageWidth, c.ioOutput)
 }
 
 //Populate a grid from a file input channel, sending events on cells set to alive
@@ -135,11 +149,6 @@ func gridFromFileInput(grid [][]bool, height, width int, fileInput <-chan uint8,
 				grid[row][col] = false
 			} else {
 				grid[row][col] = true
-				// Since the cell is being set to alive, call a CellFlipped event
-				// events <- CellFlipped{
-				// 	CompletedTurns: 0,
-				// 	Cell:           util.Cell{X: col, Y: row},
-				// }
 			}
 		}
 	}

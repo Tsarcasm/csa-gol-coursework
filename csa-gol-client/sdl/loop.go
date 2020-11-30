@@ -37,9 +37,9 @@ sdlLoop:
 				break sdlLoop
 			}
 			switch e := event.(type) {
-			case *gol.CellFlipped:
+			case gol.CellFlipped:
 				w.FlipPixel(e.Cell.X, e.Cell.Y)
-			case *gol.TurnComplete:
+			case gol.TurnComplete:
 				w.RenderFrame()
 			default:
 				if len(event.String()) > 0 {

@@ -30,6 +30,19 @@ type boardState struct {
 func engineLoop(grid [][]bool, p engineParams, c engineChannels) {
 	//grid[row][column]
 	ticker := time.NewTicker(2 * time.Second)
+
+	// Send the initial cellFlipped events for the starting grid
+	for row := 0; row < p.boardHeight; row++ {
+		for col := 0; col < p.boardWidth; col++ {
+			if grid[row][col] == true {
+				c.events <- gol.CellFlipped{
+					CompletedTurns: 0,
+					Cell:           util.Cell{X: col, Y: row},
+				}
+			}
+		}
+	}
+
 	//Load the image
 	c.events <- gol.TurnComplete{CompletedTurns: 0}
 
@@ -39,15 +52,16 @@ func engineLoop(grid [][]bool, p engineParams, c engineChannels) {
 	println("frag height", p.boardHeight/p.numThreads)
 	var wg sync.WaitGroup
 
+	gridBuffer := make([][]bool, p.boardHeight)
+	for row := 0; row < p.boardHeight; row++ {
+		gridBuffer[row] = make([]bool, p.boardWidth)
+	}
+
 	// Now we can do the game loop
 	turn := 1
 GameLoop:
 	for ; turn <= p.maxTurns; turn++ {
 		// Make a new grid buffer
-		gridBuffer := make([][]bool, p.boardHeight)
-		for row := 0; row < p.boardHeight; row++ {
-			gridBuffer[row] = make([]bool, p.boardWidth)
-		}
 		// Calculate the number of rows each worker thread should use
 		fragHeight := p.boardHeight / p.numThreads
 		for thread := 0; thread < p.numThreads; thread++ {
@@ -81,7 +95,12 @@ GameLoop:
 
 		}
 		wg.Wait()
-		grid = gridBuffer
+
+		// Copy the grid buffer over to the input grid
+		for row := 0; row < p.boardHeight; row++ {
+			copy(grid[row], gridBuffer[row])
+		}
+
 		c.events <- gol.TurnComplete{CompletedTurns: turn}
 		select {
 		case <-ticker.C:

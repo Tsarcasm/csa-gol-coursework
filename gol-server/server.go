@@ -1,29 +1,43 @@
 package main
 
 import (
+	"fmt"
 	"net"
 	"net/rpc"
+	"os"
 	"sync"
 	"time"
 
+	"github.com/gernest/wow"
+	"github.com/gernest/wow/spin"
+
 	"uk.ac.bris.cs/gameoflife/stubs"
 	"uk.ac.bris.cs/gameoflife/util"
+	// "uk.ac.bris.cs/gameoflife/util"
 )
+
+type worker struct {
+	Client  *rpc.Client
+	Address string
+}
 
 var (
 	client     *rpc.Client
-	workers    []*rpc.Client
+	workers    []*worker
 	keypresses chan rune
+	w          *wow.Wow
 )
 
 // Setup variables
 func init() {
-	keypresses := make(chan rune, 10)
-	workers := make([]*rpc.Client, 0)
+	keypresses = make(chan rune, 10)
+	workers = make([]*worker, 0)
+	w = wow.New(os.Stdout, spin.Get(spin.Arc), "")
 }
 
 // This is called each turn and passed the current board and a newBoard buffer
 // This will partition the grid up and send each fragment to a worker
+// Workers will copy the next turn onto the newBoard
 func updateBoard(board [][]bool, newBoard [][]bool, height, width int) {
 	// Calculate the number of rows each worker thread should use
 	numWorkers := len(workers)
@@ -42,21 +56,23 @@ func updateBoard(board [][]bool, newBoard [][]bool, height, width int) {
 			end = height
 		}
 		// Update this fragment
-		go doWorker(board, newBoard, start, end, workers[worker], wg)
+		go doWorker(board, newBoard, start, end, workers[worker].Client, &wg)
 	}
 	wg.Wait()
 }
 
 // Send a portion of the board to a worker to process the turn for
 // Copy the result into the correct place in the new board
-func doWorker(board [][]bool, newBoard [][]bool, start, end int, worker *rpc.Client, wg sync.WaitGroup) {
+func doWorker(board [][]bool, newBoard [][]bool, start, end int, worker *rpc.Client, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	// Spawn a new worker thread
 	response := stubs.DoTurnResponse{}
-	worker.Call(stubs.WorkerDoTurn, stubs.DoTurnRequest{
+	err := worker.Call(stubs.WorkerDoTurn, stubs.DoTurnRequest{
 		Board: board, FragStart: start, FragEnd: end}, &response)
-
+	if err != nil {
+		fmt.Println(err)
+	}
 	// Copy the fragment back into the board
 	for row := response.Frag.StartRow; row < response.Frag.EndRow; row++ {
 		copy(newBoard[row], response.Frag.Cells[row])
@@ -84,6 +100,7 @@ func handleClient(board [][]bool, height, width, maxTurns int) {
 	defer func() {
 		client.Close()
 		client = nil
+		w.Start()
 	}()
 
 	ticker := time.NewTicker(2 * time.Second)
@@ -94,6 +111,7 @@ func handleClient(board [][]bool, height, width, maxTurns int) {
 	for row := 0; row < height; row++ {
 		newBoard[row] = make([]bool, width)
 	}
+	println("Max turns: ", maxTurns)
 
 	// Update the board each turn
 	for turn <= maxTurns {
@@ -104,38 +122,42 @@ func handleClient(board [][]bool, height, width, maxTurns int) {
 			case 'q':
 				// Tell the client we're quitting
 				client.Call(stubs.ClientGameStateChange,
-					stubs.StateChangeReport{stubs.Executing, stubs.Quitting, turn}, &stubs.ClientResponse{})
+					stubs.StateChangeReport{Previous: stubs.Executing, New: stubs.Quitting, CompletedTurns: turn}, &stubs.ClientResponse{})
 				println("Closing client")
 				return
 			case 'p':
 				println("Pausing execution")
 				// Send a "pause" event
 				client.Call(stubs.ClientGameStateChange,
-					stubs.StateChangeReport{stubs.Executing, stubs.Paused, turn}, &stubs.ClientResponse{})
+					stubs.StateChangeReport{Previous: stubs.Executing, New: stubs.Paused, CompletedTurns: turn}, &stubs.ClientResponse{})
 				// Wait for another p key
 				for <-keypresses != 'p' {
 				}
 				// Send a "resume" event
 				client.Call(stubs.ClientGameStateChange,
-					stubs.StateChangeReport{stubs.Paused, stubs.Executing, turn}, &stubs.ClientResponse{})
+					stubs.StateChangeReport{Previous: stubs.Paused, New: stubs.Executing, CompletedTurns: turn}, &stubs.ClientResponse{})
 				println("Resuming execution")
 			case 's':
 				println("Telling client to save board")
 				// Send the board to the client to save
 				client.Call(stubs.ClientSaveBoard, stubs.SaveBoardRequest{
-					CompletedTurns: maxTurns,
-					Height:         height,
-					Width:          width,
-					Board:          board,
-				}, &stubs.ClientResponse{})
+					CompletedTurns: maxTurns, Height: height, Width: width, Board: board}, &stubs.ClientResponse{})
 
 			}
 		case <-ticker.C:
 			println("Telling client number of cells alive")
-			client.Call(stubs.ClientReportCellsAlive,
-				stubs.AliveCellsReport{turns, len(getAliveCells(grid))}, &stubs.ClientResponse{})
+			err := client.Call(stubs.ClientReportAliveCells,
+				stubs.AliveCellsReport{CompletedTurns: turn, NumAlive: len(getAliveCells(board))}, &stubs.ClientResponse{})
+			fmt.Println(err)
 		default:
 			updateBoard(board, newBoard, height, width)
+			// Copy the grid buffer over to the input grid
+			for row := 0; row < height; row++ {
+				copy(board[row], newBoard[row])
+			}
+
+			client.Call(stubs.ClientTurnComplete, stubs.SaveBoardRequest{
+				CompletedTurns: maxTurns, Height: height, Width: width, Board: board}, &stubs.ClientResponse{})
 			turn++
 		}
 
@@ -153,21 +175,24 @@ func handleClient(board [][]bool, height, width, maxTurns int) {
 
 }
 
+// Server structure for RPC functions
 type Server struct{}
 
-// Methods called by the client
+// StartGame is called by the client to attempt to connect
 func (s *Server) StartGame(req stubs.StartGameRequest, res *stubs.ServerResponse) (err error) {
 	println("Received request to start a game")
 	// If we already have a client respond false
 	if client != nil {
 		println("We already have a client")
-		res = &stubs.ServerResponse{false, "Server Busy"}
+		res.Message = "Server already has a client"
+		res.Success = false
 		return
 	}
 
-	if len(workers) != nil {
+	if len(workers) == 0 {
 		println("We have no workers available")
-		res = &stubs.ServerResponse{false, "Server has no workers"}
+		res.Message = "Server has no workers"
+		res.Success = false
 		return
 	}
 
@@ -175,14 +200,17 @@ func (s *Server) StartGame(req stubs.StartGameRequest, res *stubs.ServerResponse
 	newClient, err := rpc.Dial("tcp", req.ClientAddress)
 	if err != nil {
 		println("Error connecting to client: ", err.Error())
-		res = &stubs.ServerResponse{false, "Failed to connect to you"}
+		res.Message = "Failed to connect to you"
+		res.Success = false
 		return err
 	}
 
 	// If successful store the client reference
 	client = newClient
+	w.Stop()
 	println("Client connected")
-	res = &stubs.ServerResponse{true, "Connected!"}
+	res.Success = true
+	res.Message = "Connected!"
 
 	// Run the client handler goroutine
 	go handleClient(req.Board, req.Height, req.Width, req.MaxTurns)
@@ -191,7 +219,7 @@ func (s *Server) StartGame(req stubs.StartGameRequest, res *stubs.ServerResponse
 
 func (s *Server) RegisterKeypress(req stubs.KeypressRequest, res *stubs.ServerResponse) (err error) {
 	println("Received keypress request")
-	keypresses <- req.Key
+	keypresses <- rune(req.Key)
 	return
 }
 
@@ -199,17 +227,35 @@ func (s *Server) RegisterKeypress(req stubs.KeypressRequest, res *stubs.ServerRe
 func (s *Server) ConnectWorker(req stubs.WorkerConnectRequest, res *stubs.ServerResponse) (err error) {
 	println("Received reqest by a worker to connect")
 	// Try to connect to the workers RPC
-	newWorker, err := rpc.Dial("tcp", req.WorkerAddress)
+	workerClient, err := rpc.Dial("tcp", req.WorkerAddress)
 	if err != nil {
 		println("Error connecting to worker: ", err.Error())
-		res = &stubs.ServerResponse{false, "Failed to connect to  you"}
 		return err
 	}
 
 	// If successful add the worker to the workers slice
-	workers = append(workers, newWorker)
+	newWorker := worker{Address: req.WorkerAddress, Client: workerClient}
+	foundExisting := false
+	// Make sure we don't already contain this worker
+	for w := 0; w < len(workers); w++ {
+		if workers[w].Address == req.WorkerAddress {
+			println("Duplicate worker, disconnecting and reconnecting")
+			// We are already connected to this worker
+			// It's possible they disconnected, just close the previous connection
+			workers[w].Client.Close()
+			workers[w] = &newWorker
+			foundExisting = true
+			break
+		}
+	}
+	if !foundExisting {
+		workers = append(workers, &newWorker)
+	}
+
 	println("Worker added! We now have", len(workers), "workers.")
-	res = &stubs.ServerResponse{true, "Connected!"}
+
+	res.Message = "Connected!"
+	res.Success = true
 	return
 }
 
@@ -219,6 +265,15 @@ func main() {
 	// Default to port 8030
 	// portPtr := flag.String("port", ":8030", "port to listen on")
 	// flag.Parse()
+	println("Started server")
+
+	w.Start()
+	w.Text(" Awaiting connections")
+	// w.Stop()
+	// time.Sleep(2 * time.Second)
+	// w.Text("Very emojis").Spinner(spin.Get(spin.Hearts))
+	// time.Sleep(2 * time.Second)
+	// w.PersistWith(spin.Spinner{Frames: []string{"👍"}}, " Wow!")
 
 	// Register our RPC client
 	rpc.Register(&Server{})

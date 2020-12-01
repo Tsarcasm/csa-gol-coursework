@@ -67,9 +67,10 @@ var ServerRegisterKeypress = "Server.RegisterKeypress"
 var ServerConnectWorker = "Server.ConnectWorker"
 
 var ClientGameStateChange = "Client.GameStateChange"
+var ClientTurnComplete = "Client.TurnComplete"
 var ClientFinalTurnComplete = "Client.FinalTurnComplete"
 var ClientSaveBoard = "Client.SaveBoard"
-var ClientReportCellsAlive = "Client.ReportCellsAlive"
+var ClientReportAliveCells = "Client.ReportAliveCells"
 
 var WorkerDoTurn = "Worker.DoTurn"
 

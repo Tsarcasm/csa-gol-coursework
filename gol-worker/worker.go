@@ -6,6 +6,7 @@ import (
 	// 	"fmt"
 	// 	"log"
 	// 	"net"
+
 	"net"
 	"net/rpc"
 	"os"
@@ -20,9 +21,9 @@ var (
 type Worker struct{}
 
 func (w *Worker) DoTurn(req stubs.DoTurnRequest, res *stubs.DoTurnResponse) (err error) {
-	println("Received request to do a turn")
+	print(".")
 	frag := doTurn(req.Board, req.FragStart, req.FragEnd)
-	res = stubs.DoTurnResponse{frag}
+	res.Frag = frag
 	return
 }
 
@@ -34,11 +35,13 @@ func (w *Worker) Shutdown(req stubs.Empty, res *stubs.Empty) (err error) {
 }
 
 func main() {
-
+	defer println("Closing worker")
 	// Read in the network port we should listen on, from the commandline argument.
 	// Default to port 8030
 	// portPtr := flag.String("port", ":8030", "port to listen on")
 	// flag.Parse()
+
+	println("Starting worker")
 
 	// Register our RPC client
 	rpc.Register(&Worker{})
@@ -46,10 +49,30 @@ func main() {
 	// Create a listener to handle rpc requests
 	listener, _ := net.Listen("tcp", "localhost:8010")
 	defer listener.Close()
-	rpc.Accept(listener)
+	go rpc.Accept(listener)
 
-	//Todo remove this
-	println("End of main function")
+	println("Connecting to server")
+	server, err := rpc.Dial("tcp", "localhost:8020")
+
+	if err != nil {
+		println("Cannot find server:", err.Error())
+		return
+	}
+	response := new(stubs.ServerResponse)
+
+	err = server.Call(stubs.ServerConnectWorker,
+		stubs.WorkerConnectRequest{WorkerAddress: "localhost:8010"}, response)
+	if err != nil {
+		println("Connection error", err.Error())
+		return
+	} else if response.Success == false {
+		println("Server error", response.Message)
+		return
+	}
+
+	println("Connected!")
+	// Block the main function forever
+	select {}
 }
 
 // GAME LOGIC BELOW

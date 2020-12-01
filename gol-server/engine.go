@@ -1,4 +1,5 @@
 package main
+/* 
 
 import (
 	"sync"
@@ -263,3 +264,5 @@ func getAliveCells(grid [][]bool) []util.Cell {
 	}
 	return aliveCells
 }
+*/
+ 

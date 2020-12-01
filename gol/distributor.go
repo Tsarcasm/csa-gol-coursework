@@ -1,12 +1,14 @@
 package gol
 
 import (
+	"fmt"
 	"net"
 	"net/rpc"
 	"os"
 	"strconv"
 
 	"uk.ac.bris.cs/gameoflife/stubs"
+	"uk.ac.bris.cs/gameoflife/util"
 )
 
 type distributorChannels struct {
@@ -49,6 +51,27 @@ func (c *Client) FinalTurnComplete(req stubs.SaveBoardRequest, res *stubs.Client
 	return
 }
 
+var (
+	previous [][]bool
+)
+
+func (c *Client) TurnComplete(req stubs.SaveBoardRequest, res *stubs.ClientResponse) (err error) {
+	for row := 0; row < req.Height; row++ {
+		for col := 0; col < req.Width; col++ {
+			// If true send 1, else send 0
+			if req.Board[row][col] != previous[row][col] {
+				c.c.events <- CellFlipped{
+					CompletedTurns: req.CompletedTurns,
+					Cell:           util.Cell{X: col, Y: row},
+				}
+			}
+		}
+	}
+	c.c.events <- TurnComplete{req.CompletedTurns}
+	previous = req.Board
+	return
+}
+
 // The server calls this when it receives a signal to save the board
 func (c *Client) SaveBoard(req stubs.SaveBoardRequest, res *stubs.ClientResponse) (err error) {
 	println("Received save board request")
@@ -56,7 +79,7 @@ func (c *Client) SaveBoard(req stubs.SaveBoardRequest, res *stubs.ClientResponse
 	return
 }
 
-// The server calls this every 2 seconds to report how many cells are alive 
+// The server calls this every 2 seconds to report how many cells are alive
 func (c *Client) ReportAliveCells(req stubs.AliveCellsReport, res *stubs.ClientResponse) (err error) {
 	println("Received alive cells report")
 	c.c.events <- AliveCellsCount{CompletedTurns: req.CompletedTurns, CellsCount: req.NumAlive}
@@ -81,18 +104,24 @@ func distributor(p Params, c distributorChannels) {
 
 	// Covnert image to grid
 	gridFromFileInput(grid, p.ImageHeight, p.ImageWidth, c.ioInput, c.events)
-
+	previous = grid
 	// Register our RPC client
 	rpc.Register(&Client{p: p, c: c, state: stubs.Executing})
-	listener, _ := net.Listen("tcp", "localhost:8020")
+	listener, err := net.Listen("tcp", "localhost:8030")
 	go rpc.Accept(listener)
 	defer listener.Close()
 
+	fmt.Println(err)
+
 	// Connect to the RPC server
-	server, _ := rpc.Dial("tcp", "localhost:8030")
+	server, err := rpc.Dial("tcp", "localhost:8020")
+	if err != nil {
+		println("Connection error:", err.Error())
+		return
+	}
 	response := new(stubs.ServerResponse)
 	// Ask the server to start a game
-	err := server.Call(stubs.ServerStartGame, stubs.StartGameRequest{
+	err = server.Call(stubs.ServerStartGame, stubs.StartGameRequest{
 		ClientAddress: "localhost:8030",
 		Height:        p.ImageHeight,
 		Width:         p.ImageWidth,
@@ -101,7 +130,11 @@ func distributor(p Params, c distributorChannels) {
 	}, response)
 
 	if err != nil {
-		println("Error connecting:", err.Error())
+		println("Connection error:", err.Error())
+		return
+	} else if response.Success == false {
+		println("Server error:", response.Message)
+		return
 	}
 
 	// Forward keypresses to the server
@@ -132,6 +165,10 @@ func gridFromFileInput(grid [][]bool, height, width int, fileInput <-chan uint8,
 				grid[row][col] = false
 			} else {
 				grid[row][col] = true
+				events <- CellFlipped{
+					CompletedTurns: 0,
+					Cell:           util.Cell{X: col, Y: row},
+				}
 			}
 		}
 	}

@@ -3,10 +3,11 @@ package main
 import (
 	// "bufio"
 	// 	"encoding/gob"
-	// 	"fmt"
+	"fmt"
 	// 	"log"
 	// 	"net"
 
+	"flag"
 	"net"
 	"net/rpc"
 	"os"
@@ -21,7 +22,7 @@ var (
 type Worker struct{}
 
 func (w *Worker) DoTurn(req stubs.DoTurnRequest, res *stubs.DoTurnResponse) (err error) {
-	print(".")
+	fmt.Print(".")
 	frag := doTurn(req.Board, req.FragStart, req.FragEnd)
 	res.Frag = frag
 	return
@@ -38,16 +39,16 @@ func main() {
 	defer println("Closing worker")
 	// Read in the network port we should listen on, from the commandline argument.
 	// Default to port 8030
-	// portPtr := flag.String("port", ":8030", "port to listen on")
-	// flag.Parse()
+	portPtr := flag.String("p", "8010", "port to listen on")
+	flag.Parse()
 
-	println("Starting worker")
+	println("Starting worker (localhost:" + *portPtr + ")")
 
 	// Register our RPC client
 	rpc.Register(&Worker{})
 
 	// Create a listener to handle rpc requests
-	listener, _ := net.Listen("tcp", "localhost:8010")
+	listener, _ := net.Listen("tcp", "localhost:"+*portPtr)
 	defer listener.Close()
 	go rpc.Accept(listener)
 
@@ -61,7 +62,7 @@ func main() {
 	response := new(stubs.ServerResponse)
 
 	err = server.Call(stubs.ServerConnectWorker,
-		stubs.WorkerConnectRequest{WorkerAddress: "localhost:8010"}, response)
+		stubs.WorkerConnectRequest{WorkerAddress: "localhost:" + *portPtr}, response)
 	if err != nil {
 		println("Connection error", err.Error())
 		return

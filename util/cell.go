@@ -11,6 +11,21 @@ type Cell struct {
 	X, Y int
 }
 
+// GetAliveCells returns all the alive cells in a grid
+func GetAliveCells(grid [][]bool) []Cell {
+	height := len(grid)
+	width := len(grid[0])
+	aliveCells := make([]Cell, 0)
+	for row := 0; row < height; row++ {
+		for col := 0; col < width; col++ {
+			if grid[row][col] == true {
+				aliveCells = append(aliveCells, Cell{X: col, Y: row})
+			}
+		}
+	}
+	return aliveCells
+}
+
 func ReadAliveCells(path string, width, height int) []Cell {
 	//data, ioError := ioutil.ReadFile("check/images/" + fmt.Sprintf("%vx%vx%v.pgm", width, height, turns))
 	data, ioError := ioutil.ReadFile(path)

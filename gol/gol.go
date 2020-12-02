@@ -1,9 +1,5 @@
 package gol
 
-import (
-"uk.ac.bris.cs/gameoflife/stubs"
-	
-)
 // Params provides the details of how to run the Game of Life and which image to load.
 type Params struct {
 	Turns       int
@@ -20,8 +16,6 @@ func Run(p Params, events chan<- Event, keyPresses <-chan rune) {
 	ioImageInput := make(chan uint8)
 	ioImageOutput := make(chan uint8)
 
-	signals := make(chan stubs.Signals)
-
 	distributorChannels := distributorChannels{
 		events,
 		ioCommand,
@@ -29,7 +23,7 @@ func Run(p Params, events chan<- Event, keyPresses <-chan rune) {
 		ioFilename,
 		ioImageInput,
 		ioImageOutput,
-		signals,
+		keyPresses,
 	}
 	go distributor(p, distributorChannels)
 
@@ -41,12 +35,5 @@ func Run(p Params, events chan<- Event, keyPresses <-chan rune) {
 		input:    ioImageInput,
 	}
 	go startIo(p, ioChannels)
-
-	keypressChannels := keypressChannels{
-		keyPresses,
-		signals,
-	}
-
-	go startKeypress(p, keypressChannels)
 
 }

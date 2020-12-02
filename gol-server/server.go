@@ -74,8 +74,10 @@ func doWorker(board [][]bool, newBoard [][]bool, start, end int, worker *rpc.Cli
 		fmt.Println(err)
 	}
 	// Copy the fragment back into the board
+	// println(response.Frag.StartRow)
+	// println(response.Frag.EndRow)
 	for row := response.Frag.StartRow; row < response.Frag.EndRow; row++ {
-		copy(newBoard[row], response.Frag.Cells[row])
+		copy(newBoard[row], response.Frag.Cells[row-response.Frag.StartRow])
 	}
 
 }
@@ -100,6 +102,7 @@ func handleClient(board [][]bool, height, width, maxTurns int) {
 	defer func() {
 		client.Close()
 		client = nil
+		println("Disconnected Client")
 		w.Start()
 	}()
 
@@ -114,7 +117,7 @@ func handleClient(board [][]bool, height, width, maxTurns int) {
 	println("Max turns: ", maxTurns)
 
 	// Update the board each turn
-	for turn <= maxTurns {
+	for turn < maxTurns {
 		select {
 		case key := <-keypresses:
 			println("Received keypress: ", key)
@@ -122,33 +125,36 @@ func handleClient(board [][]bool, height, width, maxTurns int) {
 			case 'q':
 				// Tell the client we're quitting
 				client.Call(stubs.ClientGameStateChange,
-					stubs.StateChangeReport{Previous: stubs.Executing, New: stubs.Quitting, CompletedTurns: turn}, &stubs.ClientResponse{})
+					stubs.StateChangeReport{Previous: stubs.Executing, New: stubs.Quitting, CompletedTurns: turn}, &stubs.Empty{})
 				println("Closing client")
 				return
 			case 'p':
 				println("Pausing execution")
 				// Send a "pause" event
 				client.Call(stubs.ClientGameStateChange,
-					stubs.StateChangeReport{Previous: stubs.Executing, New: stubs.Paused, CompletedTurns: turn}, &stubs.ClientResponse{})
+					stubs.StateChangeReport{Previous: stubs.Executing, New: stubs.Paused, CompletedTurns: turn}, &stubs.Empty{})
 				// Wait for another p key
 				for <-keypresses != 'p' {
 				}
 				// Send a "resume" event
 				client.Call(stubs.ClientGameStateChange,
-					stubs.StateChangeReport{Previous: stubs.Paused, New: stubs.Executing, CompletedTurns: turn}, &stubs.ClientResponse{})
+					stubs.StateChangeReport{Previous: stubs.Paused, New: stubs.Executing, CompletedTurns: turn}, &stubs.Empty{})
 				println("Resuming execution")
 			case 's':
 				println("Telling client to save board")
 				// Send the board to the client to save
 				client.Call(stubs.ClientSaveBoard, stubs.SaveBoardRequest{
-					CompletedTurns: maxTurns, Height: height, Width: width, Board: board}, &stubs.ClientResponse{})
+					CompletedTurns: maxTurns, Height: height, Width: width, Board: board}, &stubs.Empty{})
 
 			}
 		case <-ticker.C:
 			println("Telling client number of cells alive")
 			err := client.Call(stubs.ClientReportAliveCells,
-				stubs.AliveCellsReport{CompletedTurns: turn, NumAlive: len(getAliveCells(board))}, &stubs.ClientResponse{})
-			fmt.Println(err)
+				stubs.AliveCellsReport{CompletedTurns: turn, NumAlive: len(getAliveCells(board))}, &stubs.Empty{})
+			if err != nil {
+				fmt.Println("Error sending num alive ", err)
+				return
+			}
 		default:
 			updateBoard(board, newBoard, height, width)
 			// Copy the grid buffer over to the input grid
@@ -156,15 +162,22 @@ func handleClient(board [][]bool, height, width, maxTurns int) {
 				copy(board[row], newBoard[row])
 			}
 
-			client.Call(stubs.ClientTurnComplete, stubs.SaveBoardRequest{
-				CompletedTurns: maxTurns, Height: height, Width: width, Board: board}, &stubs.ClientResponse{})
+			println("Sending turn complete")
+			err := client.Call(stubs.ClientTurnComplete, stubs.SaveBoardRequest{
+				CompletedTurns: maxTurns, Height: height, Width: width, Board: board},
+				&stubs.Empty{})
+			if err != nil {
+				fmt.Println("Error sending turn complete ", err)
+				return
+			}
 			turn++
 		}
 
 	}
 
+	println("All turns done, send final turn complete")
 	// Once all turns are done, tell the client the final turn is complete
-	client.Call(stubs.ClientFinalTurnComplete,
+	err := client.Call(stubs.ClientFinalTurnComplete,
 		stubs.SaveBoardRequest{
 			CompletedTurns: maxTurns,
 			Height:         height,
@@ -172,7 +185,11 @@ func handleClient(board [][]bool, height, width, maxTurns int) {
 			Board:          board,
 		},
 		&stubs.ClientResponse{})
-
+	if err != nil {
+		fmt.Println("Error sending final turn complete ", err)
+		return
+	}
+	return
 }
 
 // Server structure for RPC functions
@@ -225,7 +242,7 @@ func (s *Server) RegisterKeypress(req stubs.KeypressRequest, res *stubs.ServerRe
 
 // Methods called by the workers
 func (s *Server) ConnectWorker(req stubs.WorkerConnectRequest, res *stubs.ServerResponse) (err error) {
-	println("Received reqest by a worker to connect")
+	println("Worker at", req.WorkerAddress, "wants to connect")
 	// Try to connect to the workers RPC
 	workerClient, err := rpc.Dial("tcp", req.WorkerAddress)
 	if err != nil {
@@ -281,7 +298,9 @@ func main() {
 	// Create a listener to handle rpc requests
 	listener, _ := net.Listen("tcp", "localhost:8020")
 	defer listener.Close()
-	rpc.Accept(listener)
+	go rpc.Accept(listener)
+
+	select {}
 
 	//Todo remove this
 	println("End of main function")

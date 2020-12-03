@@ -39,12 +39,12 @@ var ServerStartGame = "Server.StartGame"
 var ServerRegisterKeypress = "Server.RegisterKeypress"
 var ServerConnectWorker = "Server.ConnectWorker"
 
-// Client RPC strings
-var ClientGameStateChange = "Client.GameStateChange"
-var ClientTurnComplete = "Client.TurnComplete"
-var ClientFinalTurnComplete = "Client.FinalTurnComplete"
-var ClientSaveBoard = "Client.SaveBoard"
-var ClientReportAliveCells = "Client.ReportAliveCells"
+// Controller RPC strings
+var ControllerGameStateChange = "Controller.GameStateChange"
+var ControllerTurnComplete = "Controller.TurnComplete"
+var ControllerFinalTurnComplete = "Controller.FinalTurnComplete"
+var ControllerSaveBoard = "Controller.SaveBoard"
+var ControllerReportAliveCells = "Controller.ReportAliveCells"
 
 // Worker RPC strings
 var WorkerDoTurn = "Worker.DoTurn"
@@ -57,12 +57,12 @@ type ServerResponse struct {
 	Message string
 }
 
-// StartGameRequest contains all data required for a client to connect to a server
+// StartGameRequest contains all data required for a controller to connect to a server
 // and start a game
-// This will send the address of the client, along with information about the board
+// This will send the address of the controller, along with information about the board
 // and the starting board state
 type StartGameRequest struct {
-	ClientAddress string
+	ControllerAddress string
 
 	Height   int
 	Width    int
@@ -71,7 +71,7 @@ type StartGameRequest struct {
 	Board [][]bool
 }
 
-// KeypressRequest is used to send a keypress from a client to be handled at the server
+// KeypressRequest is used to send a keypress from a controller to be handled at the server
 type KeypressRequest struct {
 	Key rune
 }
@@ -82,19 +82,19 @@ type WorkerConnectRequest struct {
 	WorkerAddress string
 }
 
-// StateChangeReport is passed to the client to inform them of changes to game state 
+// StateChangeReport is passed to the controller to inform them of changes to game state
 type StateChangeReport struct {
 	Previous       State
 	New            State
 	CompletedTurns int
 }
 
-// TurnCompleteReport is passed to the client every time a turn is completed
+// TurnCompleteReport is passed to the controller every time a turn is completed
 type TurnCompleteReport struct {
 	CompletedTurns int
 }
 
-// SaveBoardRequest is passed to the client to ask them to save the board 
+// SaveBoardRequest is passed to the controller to ask them to save the board
 type SaveBoardRequest struct {
 	CompletedTurns int
 
@@ -103,7 +103,7 @@ type SaveBoardRequest struct {
 	Board  [][]bool
 }
 
-// AliveCellsReport is passed to the client every 2 seconds to tell them how many
+// AliveCellsReport is passed to the controller every 2 seconds to tell them how many
 // cells are alive
 type AliveCellsReport struct {
 	CompletedTurns int
@@ -123,5 +123,5 @@ type DoTurnResponse struct {
 	Frag Fragment
 }
 
-// Empty is used when there is no information for an RPC function to return 
+// Empty is used when there is no information for an RPC function to return
 type Empty struct{}

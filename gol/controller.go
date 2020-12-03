@@ -14,7 +14,7 @@ import (
 	"uk.ac.bris.cs/gameoflife/util"
 )
 
-type distributorChannels struct {
+type controllerChannels struct {
 	events     chan<- Event
 	ioCommand  chan<- ioCommand
 	ioIdle     <-chan bool
@@ -24,12 +24,11 @@ type distributorChannels struct {
 	keypresses <-chan rune
 }
 
-// Client structure for the client RPC 
-type Client struct {
+// Controller structure for the client RPC
+type Controller struct {
 	params   Params
-	channels distributorChannels
+	channels controllerChannels
 	state    stubs.State
-	closed   bool
 }
 
 var (
@@ -44,7 +43,7 @@ func init() {
 // Todo: improve the comments here
 
 // GameStateChange is called by the server to report a change in game state
-func (c *Client) GameStateChange(req stubs.StateChangeReport, res *stubs.Empty) (err error) {
+func (c *Controller) GameStateChange(req stubs.StateChangeReport, res *stubs.Empty) (err error) {
 	println("Received state change report")
 	println(req.Previous.String(), "->", req.New.String())
 	// Send an event
@@ -61,7 +60,7 @@ func (c *Client) GameStateChange(req stubs.StateChangeReport, res *stubs.Empty) 
 
 // FinalTurnComplete is called by the server when it has processed all turns
 // It will send the final board which can then be saved
-func (c *Client) FinalTurnComplete(req stubs.SaveBoardRequest, res *stubs.Empty) (err error) {
+func (c *Controller) FinalTurnComplete(req stubs.SaveBoardRequest, res *stubs.Empty) (err error) {
 	println("Final turn complete")
 	// Send an event
 	c.channels.events <- FinalTurnComplete{
@@ -79,7 +78,7 @@ func (c *Client) FinalTurnComplete(req stubs.SaveBoardRequest, res *stubs.Empty)
 
 // TurnComplete is called by the server when a turn has been completed
 // It contains a copy of the board on this turn so we can display it
-func (c *Client) TurnComplete(req stubs.SaveBoardRequest, res *stubs.Empty) (err error) {
+func (c *Controller) TurnComplete(req stubs.SaveBoardRequest, res *stubs.Empty) (err error) {
 	// If any cells have changed then send a cellflipped event
 	for row := 0; row < req.Height; row++ {
 		for col := 0; col < req.Width; col++ {
@@ -100,7 +99,7 @@ func (c *Client) TurnComplete(req stubs.SaveBoardRequest, res *stubs.Empty) (err
 }
 
 // SaveBoard is called by the server when it wants us to save the board (e.g. if we send an 's' key)
-func (c *Client) SaveBoard(req stubs.SaveBoardRequest, res *stubs.Empty) (err error) {
+func (c *Controller) SaveBoard(req stubs.SaveBoardRequest, res *stubs.Empty) (err error) {
 	println("Received save board request")
 	// Save the board
 	go saveBoard(req.Board, req.CompletedTurns, c.params, c.channels)
@@ -109,7 +108,7 @@ func (c *Client) SaveBoard(req stubs.SaveBoardRequest, res *stubs.Empty) (err er
 
 // ReportAliveCells is called by the server to report how many cells are alive
 // This is usually called at regular intervals
-func (c *Client) ReportAliveCells(req stubs.AliveCellsReport, res *stubs.Empty) (err error) {
+func (c *Controller) ReportAliveCells(req stubs.AliveCellsReport, res *stubs.Empty) (err error) {
 	println("Received alive cells report")
 	println("Turn:", req.CompletedTurns, ",", req.NumAlive)
 	// Send an event
@@ -118,7 +117,7 @@ func (c *Client) ReportAliveCells(req stubs.AliveCellsReport, res *stubs.Empty) 
 }
 
 // distributor divides the work between workers and interacts with other goroutines.
-func distributor(p Params, c distributorChannels) {
+func distributor(p Params, c controllerChannels) {
 	println("Starting new game")
 	// Create a new board to store 0th turn
 	board := make([][]bool, p.ImageHeight)
@@ -138,9 +137,9 @@ func distributor(p Params, c distributorChannels) {
 	previous = board
 
 	// Create a RPC server for ourselves
-	client := Client{params: p, channels: c, state: stubs.Executing}
-	clientRPC := rpc.NewServer()
-	clientRPC.Register(&client)
+	controller := Controller{params: p, channels: c, state: stubs.Executing}
+	controllerRPC := rpc.NewServer()
+	controllerRPC.Register(&controller)
 
 	// Start a listener to accept incoming RPC calls
 	listener, err := net.Listen("tcp", "localhost:8031")
@@ -150,11 +149,11 @@ func distributor(p Params, c distributorChannels) {
 	}
 
 	// Start a goroutine to connect to the server and start a game
-	go runGame(p, c, board, client, listener)
+	go runGame(p, c, board, controller, listener)
 
 	// Block this routiune and handle incoming RPC calls
 	// This will return when the listener is closed
-	clientRPC.Accept(listener)
+	controllerRPC.Accept(listener)
 
 	// At this point the game has ended
 	//Gracefully close everything
@@ -170,7 +169,7 @@ func distributor(p Params, c distributorChannels) {
 	defer close(c.events)
 }
 
-func runGame(p Params, c distributorChannels, board [][]bool, client Client, listener net.Listener) {
+func runGame(p Params, c controllerChannels, board [][]bool, controller Controller, listener net.Listener) {
 	server, err := rpc.Dial("tcp", "localhost:8020")
 	if err != nil {
 		println("Connection error:", err.Error())
@@ -182,11 +181,11 @@ func runGame(p Params, c distributorChannels, board [][]bool, client Client, lis
 	for try < 4 {
 
 		err = server.Call(stubs.ServerStartGame, stubs.StartGameRequest{
-			ClientAddress: "localhost:8031",
-			Height:        p.ImageHeight,
-			Width:         p.ImageWidth,
-			MaxTurns:      p.Turns,
-			Board:         board,
+			ControllerAddress: "localhost:8031",
+			Height:            p.ImageHeight,
+			Width:             p.ImageWidth,
+			MaxTurns:          p.Turns,
+			Board:             board,
 		}, response)
 
 		if err != nil {
@@ -213,7 +212,6 @@ func runGame(p Params, c distributorChannels, board [][]bool, client Client, lis
 			}
 		case <-stopChan:
 			println("Closing connections")
-			client.closed = true
 			server.Close()
 			listener.Close()
 			return
@@ -222,7 +220,7 @@ func runGame(p Params, c distributorChannels, board [][]bool, client Client, lis
 
 }
 
-func saveBoard(grid [][]bool, completedTurns int, p Params, c distributorChannels) {
+func saveBoard(grid [][]bool, completedTurns int, p Params, c controllerChannels) {
 	c.ioCommand <- ioOutput
 	filename := strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight) + "x" + strconv.Itoa(completedTurns)
 	println("Saving to file", filename)

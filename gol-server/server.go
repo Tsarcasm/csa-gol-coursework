@@ -22,7 +22,7 @@ type worker struct {
 }
 
 var (
-	client     *rpc.Client
+	controller *rpc.Client
 	workers    []*worker
 	keypresses chan rune
 	w          *wow.Wow
@@ -79,15 +79,15 @@ func updateBoard(board [][]bool, newBoard [][]bool, height, width int) {
 	wg.Wait()
 }
 
-// This function contains the game loop and sends messages to the client
+// This function contains the game loop and sends messages to the controller
 // It will return when the final turn is completed or there is an error
-// When it returns, the client is disconnected and the server can accept new connections
-func clientLoop(board [][]bool, height, width, maxTurns int) {
-	// When loop is finished, disconnect client
+// When it returns, the controller is disconnected and the server can accept new connections
+func controllerLoop(board [][]bool, height, width, maxTurns int) {
+	// When loop is finished, disconnect controller
 	defer func() {
-		client.Close()
-		client = nil
-		println("Disconnected Client")
+		controller.Close()
+		controller = nil
+		println("Disconnected Controller")
 		// w.Start()
 	}()
 
@@ -109,34 +109,34 @@ func clientLoop(board [][]bool, height, width, maxTurns int) {
 			println("Received keypress: ", key)
 			switch key {
 			case 'q':
-				// Tell the client we're quitting
-				client.Call(stubs.ClientGameStateChange,
+				// Tell the controller we're quitting
+				controller.Call(stubs.ControllerGameStateChange,
 					stubs.StateChangeReport{Previous: stubs.Executing, New: stubs.Quitting, CompletedTurns: turn}, &stubs.Empty{})
-				println("Closing client")
+				println("Closing controller")
 				return
 			case 'p':
 				println("Pausing execution")
 				// Send a "pause" event
-				client.Call(stubs.ClientGameStateChange,
+				controller.Call(stubs.ControllerGameStateChange,
 					stubs.StateChangeReport{Previous: stubs.Executing, New: stubs.Paused, CompletedTurns: turn}, &stubs.Empty{})
 				// Wait for another p key
 				for <-keypresses != 'p' {
 				}
 				// Send a "resume" event
-				client.Call(stubs.ClientGameStateChange,
+				controller.Call(stubs.ControllerGameStateChange,
 					stubs.StateChangeReport{Previous: stubs.Paused, New: stubs.Executing, CompletedTurns: turn}, &stubs.Empty{})
 				println("Resuming execution")
 			case 's':
-				println("Telling client to save board")
-				// Send the board to the client to save
-				client.Call(stubs.ClientSaveBoard,
+				println("Telling controller to save board")
+				// Send the board to the controller to save
+				controller.Call(stubs.ControllerSaveBoard,
 					stubs.SaveBoardRequest{CompletedTurns: maxTurns, Height: height, Width: width, Board: board}, &stubs.Empty{})
 
 			}
-		// Tell the client how many cells are alive every 2 seconds
+		// Tell the controller how many cells are alive every 2 seconds
 		case <-ticker.C:
-			println("Telling client number of cells alive")
-			err := client.Call(stubs.ClientReportAliveCells,
+			println("Telling controller number of cells alive")
+			err := controller.Call(stubs.ControllerReportAliveCells,
 				stubs.AliveCellsReport{CompletedTurns: turn, NumAlive: len(util.GetAliveCells(board))}, &stubs.Empty{})
 			if err != nil {
 				fmt.Println("Error sending num alive ", err)
@@ -151,9 +151,9 @@ func clientLoop(board [][]bool, height, width, maxTurns int) {
 			}
 
 			println("Sending turn complete")
-			// Tell the client we have completed a turn
-			// Do this concurrently since we don't need to wait for the client
-			client.Call(stubs.ClientTurnComplete,
+			// Tell the controller we have completed a turn
+			// Do this concurrently since we don't need to wait for the controller
+			controller.Call(stubs.ControllerTurnComplete,
 				stubs.SaveBoardRequest{CompletedTurns: maxTurns, Height: height, Width: width, Board: board}, &stubs.Empty{})
 			turn++
 		}
@@ -161,8 +161,8 @@ func clientLoop(board [][]bool, height, width, maxTurns int) {
 	}
 
 	println("All turns done, send final turn complete")
-	// Once all turns are done, tell the client the final turn is complete
-	err := client.Call(stubs.ClientFinalTurnComplete,
+	// Once all turns are done, tell the controller the final turn is complete
+	err := controller.Call(stubs.ControllerFinalTurnComplete,
 		stubs.SaveBoardRequest{
 			CompletedTurns: maxTurns,
 			Height:         height,
@@ -180,13 +180,13 @@ func clientLoop(board [][]bool, height, width, maxTurns int) {
 // Server structure for RPC functions
 type Server struct{}
 
-// StartGame is called by the client when it wants to connect and start a game
+// StartGame is called by the controller when it wants to connect and start a game
 func (s *Server) StartGame(req stubs.StartGameRequest, res *stubs.ServerResponse) (err error) {
 	println("Received request to start a game")
-	// If we already have a client respond false
-	if client != nil {
-		println("We already have a client")
-		res.Message = "Server already has a client"
+	// If we already have a controller respond false
+	if controller != nil {
+		println("We already have a controller")
+		res.Message = "Server already has a controller"
 		res.Success = false
 		return
 	}
@@ -198,28 +198,28 @@ func (s *Server) StartGame(req stubs.StartGameRequest, res *stubs.ServerResponse
 		return
 	}
 
-	// Connect to the new client's RPC server
-	newClient, err := rpc.Dial("tcp", req.ClientAddress)
+	// Connect to the new controller's RPC server
+	newController, err := rpc.Dial("tcp", req.ControllerAddress)
 	if err != nil {
-		println("Error connecting to client: ", err.Error())
+		println("Error connecting to controller: ", err.Error())
 		res.Message = "Failed to connect to you"
 		res.Success = false
 		return err
 	}
 
-	// If successful store the client reference
-	client = newClient
+	// If successful store the controller reference
+	controller = newController
 	w.Stop()
-	println("Client connected")
+	println("Controller connected")
 	res.Success = true
 	res.Message = "Connected!"
 
-	// Run the client handler goroutine
-	go clientLoop(req.Board, req.Height, req.Width, req.MaxTurns)
+	// Run the controller handler goroutine
+	go controllerLoop(req.Board, req.Height, req.Width, req.MaxTurns)
 	return
 }
 
-// RegisterKeypress is called by clients when a key is pressed on their SDL window
+// RegisterKeypress is called by controller when a key is pressed on their SDL window
 func (s *Server) RegisterKeypress(req stubs.KeypressRequest, res *stubs.ServerResponse) (err error) {
 	println("Received keypress request")
 	keypresses <- rune(req.Key)
@@ -272,7 +272,7 @@ func main() {
 	// w.Start()
 	// w.Text(" Awaiting connections")
 
-	// Register our RPC client
+	// Register our RPC server
 	rpc.Register(&Server{})
 
 	// Create a listener to handle rpc requests

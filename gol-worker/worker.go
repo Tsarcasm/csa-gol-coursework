@@ -19,7 +19,9 @@ var (
 	server *rpc.Client
 )
 
+// Worker is the struct for our RPC server
 type Worker struct{}
+
 
 func (w *Worker) DoTurn(req stubs.DoTurnRequest, res *stubs.DoTurnResponse) (err error) {
 	fmt.Print(".")
@@ -77,6 +79,9 @@ func main() {
 }
 
 // GAME LOGIC BELOW
+
+// Calculate the next turn, given pointers to the start and end to operate over
+// Return a fragment of the grid with the next turn's cells 
 func doTurn(grid [][]bool, startRow, endRow int) (gridFragment stubs.Fragment) {
 	width := len(grid[0])
 	gridFragment = stubs.Fragment{
@@ -101,38 +106,43 @@ func doTurn(grid [][]bool, startRow, endRow int) (gridFragment stubs.Fragment) {
 	return gridFragment
 }
 
-func nextCellState(x int, y int, grid [][]bool) bool {
-	adj := getNeighbours(x, y, grid)
+// Calculate the next cell state according to Game Of Life rules
+// Returns a bool with the next state of the cell
+func nextCellState(x int, y int, board [][]bool) bool {
+	// Count the number of adjacent alive cells
+	adj := countAliveNeighbours(x, y, board)
 
+	// Default to dead
 	newState := false
 
-	if grid[y][x] == true {
-		if adj < 2 {
-			newState = false
-		} else if adj > 3 {
-			newState = false
-		} else {
+	// Find what will make the cell alive
+
+	if board[y][x] == true {
+		if adj == 2 || adj == 3 {
+			// If only 2 or 3 neighbours then stay alive
 			newState = true
 		}
 	} else {
 		if adj == 3 {
+			// If there are 3 neighbours then come alive
 			newState = true
-		} else {
-			newState = false
 		}
 	}
 	return newState
 }
 
-func getNeighbours(x int, y int, grid [][]bool) int {
-	height := len(grid)
-	width := len(grid[0])
+// Count how many alive neighbours a cell has
+// This will correctly wrap around edges
+func countAliveNeighbours(x int, y int, board [][]bool) int {
+	height := len(board)
+	width := len(board[0])
 	numNeighbours := 0
 
-	// Check all cells in a grid around this one
+	// Count all alive cells in the board in a
+	// 1 cell radius of the centre
 	for _x := -1; _x < 2; _x++ {
 		for _y := -1; _y < 2; _y++ {
-			//this cell is not a neighbour
+			// Ignore the centre cell
 			if _x == 0 && _y == 0 {
 				continue
 			}
@@ -149,7 +159,8 @@ func getNeighbours(x int, y int, grid [][]bool) int {
 				wrapY = height - 1
 			}
 
-			v := grid[wrapY][wrapX]
+			// test if this cell is alive
+			v := board[wrapY][wrapX]
 			if v == true {
 				numNeighbours++
 			}
@@ -158,3 +169,4 @@ func getNeighbours(x int, y int, grid [][]bool) int {
 
 	return numNeighbours
 }
+

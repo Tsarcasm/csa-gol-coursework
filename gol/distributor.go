@@ -1,6 +1,7 @@
 package gol
 
 import (
+	"fmt"
 	"strconv"
 
 	"sync"
@@ -16,7 +17,7 @@ type distributorChannels struct {
 	ioFilename chan<- string
 	ioInput    <-chan uint8
 	ioOutput   chan<- uint8
-	keyCommand <-chan keyCommand
+	keyPresses <-chan rune
 }
 
 type Fragment struct {
@@ -27,13 +28,12 @@ type Fragment struct {
 
 // distributor divides the work between workers and interacts with other goroutines.
 func distributor(p Params, c distributorChannels) {
-	//grid[row][column]
 	ticker := time.NewTicker(2 * time.Second)
-	grid := make([][]bool, p.ImageHeight)
+	board := make([][]bool, p.ImageHeight)
 
 	// Make a column array for each row
 	for row := 0; row < p.ImageHeight; row++ {
-		grid[row] = make([]bool, p.ImageWidth)
+		board[row] = make([]bool, p.ImageWidth)
 	}
 
 	//Load the image
@@ -41,91 +41,23 @@ func distributor(p Params, c distributorChannels) {
 	filename := strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight)
 	println("Reading in file", filename)
 	c.ioFilename <- filename
-	// Covnert image to grid
-	gridFromFileInput(grid, p.ImageHeight, p.ImageWidth, c.ioInput, c.events)
+	// Covnert image to board
+	boardFromFileInput(board, p.ImageHeight, p.ImageWidth, c.ioInput, c.events)
 	c.events <- TurnComplete{0}
 
-	// Make a grid buffer to store the next grid state into
+	// Make a board buffer to store the next board state into
 
-	gridFragments := make(chan Fragment, p.Threads)
+	boardFragments := make(chan Fragment, p.Threads)
 
 	println("frag height", p.ImageHeight/p.Threads)
 	var wg sync.WaitGroup
 
 	// Now we can do the game loop
-	gridBuffer := make([][]bool, p.ImageHeight)
+	boardBuffer := make([][]bool, p.ImageHeight)
 	for row := 0; row < p.ImageHeight; row++ {
-		gridBuffer[row] = make([]bool, p.ImageWidth)
+		boardBuffer[row] = make([]bool, p.ImageWidth)
 	}
-	turn := 1
-GameLoop:
-	for ; turn <= p.Turns; turn++ {
-		// Make a new grid
-		// Calculate the number of rows each worker thread should use
-		fragHeight := p.ImageHeight / p.Threads
-		for thread := 0; thread < p.Threads; thread++ {
-			// Rows to process turns for
-			start := thread * fragHeight
-			end := (thread + 1) * fragHeight
-			if thread == p.Threads-1 {
-				end = p.ImageHeight
-			}
-			if turn == 1 {
-				println(start, end)
-			}
-			// Spawn a new worker thread
-			go turnThread(grid, turn, c.events, start, end, gridFragments)
-		}
-
-		// Get the result of each thread
-		for thread := 0; thread < p.Threads; thread++ {
-			fragment := <-gridFragments
-			wg.Add(1)
-
-			// Stitch the thread results back into the grid
-			go func() {
-				defer wg.Done()
-				for row := fragment.startRow; row < fragment.endRow; row++ {
-					for col := 0; col < p.ImageWidth; col++ {
-						gridBuffer[row][col] = fragment.cells[row-fragment.startRow][col]
-					}
-				}
-			}()
-
-		}
-		wg.Wait()
-
-		// Copy the grid buffer over to the input grid
-		for row := 0; row < p.ImageHeight; row++ {
-			copy(grid[row], gridBuffer[row])
-		}
-		
-		c.events <- TurnComplete{turn}
-		select {
-		case <-ticker.C:
-			c.events <- AliveCellsCount{
-				turn,
-				len(makeAliveCells(grid)),
-			}
-		case keypress := <-c.keyCommand:
-			switch keypress {
-			case save:
-				saveGrid(grid, turn, p, c)
-			case quit:
-				break GameLoop
-			case pause:
-				//Wait for another pause instruction
-				println("Pausing on turn", turn)
-				for <-c.keyCommand != pause {
-				}
-				println("Continuing")
-			}
-
-		default:
-			// Don't wait for an instruction, keep going
-		}
-
-	}
+	turn := gameLoop(p, board, c, boardFragments, &wg, boardBuffer, ticker)
 
 	// If we've finished all turns ensure turns = the last turn we did
 	if turn > p.Turns {
@@ -134,11 +66,11 @@ GameLoop:
 
 	c.events <- FinalTurnComplete{
 		turn,
-		makeAliveCells(grid),
+		makeAliveCells(board),
 	}
 
 	// Finally, save the image to a new file
-	saveGrid(grid, turn, p, c)
+	saveBoard(board, turn, p, c)
 
 	// Make sure that the Io has finished any output before exiting.
 	c.ioCommand <- ioCheckIdle
@@ -149,17 +81,99 @@ GameLoop:
 	close(c.events)
 }
 
-func saveGrid(grid [][]bool, turn int, p Params, c distributorChannels) {
+func gameLoop(p Params, board [][]bool, c distributorChannels, boardFragments chan Fragment, wg *sync.WaitGroup, boardBuffer [][]bool, ticker *time.Ticker) int {
+	// Starting turn is 1
+	turn := 1
+	fragHeight := p.ImageHeight / p.Threads
+	for ; turn <= p.Turns; turn++ {
+		// Divide the board into fragments
+		// Give each to a worker goroutine
+		for thread := 0; thread < p.Threads; thread++ {
+			start := thread * fragHeight
+			end := (thread + 1) * fragHeight
+
+			// Give any remaining rows to the last worker
+			if thread == p.Threads-1 {
+				end = p.ImageHeight
+			}
+
+			go turnThread(board, turn, c.events, start, end, boardFragments)
+		}
+
+		// Get the result in from the threads
+		// Copy them into the new board
+		for thread := 0; thread < p.Threads; thread++ {
+			fragment := <-boardFragments
+			wg.Add(1)
+
+			// Copy the fragment into board buffer
+			go func() {
+				defer wg.Done()
+				for row := fragment.startRow; row < fragment.endRow; row++ {
+					for row := fragment.startRow; row < fragment.endRow; row++ {
+						copy(boardBuffer[row], fragment.cells[row-fragment.startRow])
+					}
+				}
+			}()
+
+		}
+		// Wait for all the fragments to be copied in
+		wg.Wait()
+
+		// Copy the board buffer back into the board
+		for row := 0; row < p.ImageHeight; row++ {
+			copy(board[row], boardBuffer[row])
+		}
+
+		// Send a turn complete event
+		c.events <- TurnComplete{turn}
+		select {
+		// Every ticker tick send an AliveCellsCount event
+		case <-ticker.C:
+			c.events <- AliveCellsCount{
+				turn,
+				len(makeAliveCells(board)),
+			}
+			//
+		case key := <-c.keyPresses:
+			fmt.Println("Keypress:", key)
+			switch key {
+			case 's':
+				saveBoard(board, turn, p, c)
+			case 'q':
+				// To quit, just return the turn
+				// Send a quit event
+				c.events <- StateChange{turn, Quitting}
+				return turn
+			case 'p':
+				println("Pausing on turn", turn)
+				// Send a pause event
+				c.events <- StateChange{turn, Paused}
+				// Wait for another p keypress
+				for <-c.keyPresses != 'p' {
+				}
+				c.events <- StateChange{turn, Executing}
+				println("Continuing")
+			}
+
+		default:
+		}
+
+	}
+	return turn
+}
+
+func saveBoard(board [][]bool, turn int, p Params, c distributorChannels) {
 	c.ioCommand <- ioOutput
 	filename := strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight) + "x" + strconv.Itoa(turn)
 	println("Saving to file", filename)
 	c.ioFilename <- filename
-	gridToFileOutput(grid, p.ImageHeight, p.ImageWidth, c.ioOutput)
+	boardToFileOutput(board, p.ImageHeight, p.ImageWidth, c.ioOutput)
 }
 
-func turnThread(grid [][]bool, turn int, events chan<- Event, startRow, endRow int, fragments chan<- Fragment) {
-	width := len(grid[0])
-	gridFragment := Fragment{
+func turnThread(board [][]bool, turn int, events chan<- Event, startRow, endRow int, fragments chan<- Fragment) {
+	width := len(board[0])
+	boardFragment := Fragment{
 		startRow,
 		endRow,
 		make([][]bool, endRow-startRow),
@@ -168,14 +182,14 @@ func turnThread(grid [][]bool, turn int, events chan<- Event, startRow, endRow i
 	// Iterate over each cell
 	for row := startRow; row < endRow; row++ {
 
-		gridFragment.cells[row-startRow] = make([]bool, width)
+		boardFragment.cells[row-startRow] = make([]bool, width)
 		for col := 0; col < width; col++ {
 
 			// Calculate the next cell state
-			newCell := nextCellState(col, row, grid)
+			newCell := nextCellState(col, row, board)
 
 			// If the cell has flipped then raise an event
-			if newCell != grid[row][col] {
+			if newCell != board[row][col] {
 				events <- CellFlipped{
 					CompletedTurns: turn,
 					Cell:           util.Cell{X: col, Y: row},
@@ -183,23 +197,23 @@ func turnThread(grid [][]bool, turn int, events chan<- Event, startRow, endRow i
 			}
 
 			// Update the value of the new cell
-			gridFragment.cells[row-startRow][col] = newCell
+			boardFragment.cells[row-startRow][col] = newCell
 
 		}
 	}
-	fragments <- gridFragment
+	fragments <- boardFragment
 }
 
-//Populate a grid from a file input channel, sending events on cells set to alive
-func gridFromFileInput(grid [][]bool, height, width int, fileInput <-chan uint8, events chan<- Event) {
+//Populate a board from a file input channel, sending events on cells set to alive
+func boardFromFileInput(board [][]bool, height, width int, fileInput <-chan uint8, events chan<- Event) {
 	for row := 0; row < height; row++ {
 		for col := 0; col < width; col++ {
 			cell := <-fileInput
 			// Set the cell value to the corresponding image pixel
 			if cell == 0 {
-				grid[row][col] = false
+				board[row][col] = false
 			} else {
-				grid[row][col] = true
+				board[row][col] = true
 				// Since the cell is being set to alive, call a CellFlipped event
 				events <- CellFlipped{
 					CompletedTurns: 0,
@@ -210,11 +224,11 @@ func gridFromFileInput(grid [][]bool, height, width int, fileInput <-chan uint8,
 	}
 }
 
-func gridToFileOutput(grid [][]bool, height, width int, fileOutput chan<- uint8) {
+func boardToFileOutput(board [][]bool, height, width int, fileOutput chan<- uint8) {
 	for row := 0; row < height; row++ {
 		for col := 0; col < width; col++ {
 			// If true send 1, else send 0
-			if grid[row][col] {
+			if board[row][col] {
 				fileOutput <- 1
 			} else {
 				fileOutput <- 0
@@ -232,12 +246,12 @@ any dead cell with exactly three live neighbours becomes alive
 
 */
 
-func nextCellState(x int, y int, grid [][]bool) bool {
-	adj := getNeighbours(x, y, grid)
+func nextCellState(x int, y int, board [][]bool) bool {
+	adj := getNeighbours(x, y, board)
 
 	newState := false
 
-	if grid[y][x] == true {
+	if board[y][x] == true {
 		if adj < 2 {
 			newState = false
 		} else if adj > 3 {
@@ -255,12 +269,12 @@ func nextCellState(x int, y int, grid [][]bool) bool {
 	return newState
 }
 
-func getNeighbours(x int, y int, grid [][]bool) int {
-	height := len(grid)
-	width := len(grid[0])
+func getNeighbours(x int, y int, board [][]bool) int {
+	height := len(board)
+	width := len(board[0])
 	numNeighbours := 0
 
-	// Check all cells in a grid around this one
+	// Check all cells in a board around this one
 	for _x := -1; _x < 2; _x++ {
 		for _y := -1; _y < 2; _y++ {
 			//this cell is not a neighbour
@@ -280,7 +294,7 @@ func getNeighbours(x int, y int, grid [][]bool) int {
 				wrapY = height - 1
 			}
 
-			v := grid[wrapY][wrapX]
+			v := board[wrapY][wrapX]
 			if v == true {
 				numNeighbours++
 			}
@@ -290,14 +304,14 @@ func getNeighbours(x int, y int, grid [][]bool) int {
 	return numNeighbours
 }
 
-// returns the alive cells in the grid
-func makeAliveCells(grid [][]bool) []util.Cell {
-	height := len(grid)
-	width := len(grid[0])
+// returns the alive cells in the board
+func makeAliveCells(board [][]bool) []util.Cell {
+	height := len(board)
+	width := len(board[0])
 	aliveCells := make([]util.Cell, 0)
 	for row := 0; row < height; row++ {
 		for col := 0; col < width; col++ {
-			if grid[row][col] == true {
+			if board[row][col] == true {
 				aliveCells = append(aliveCells, util.Cell{X: col, Y: row})
 			}
 		}

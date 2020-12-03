@@ -4,6 +4,8 @@ import (
 	// "bufio"
 	// 	"encoding/gob"
 	"fmt"
+	"time"
+
 	// 	"log"
 	// 	"net"
 
@@ -16,7 +18,8 @@ import (
 )
 
 var (
-	server *rpc.Client
+	server     *rpc.Client
+	ourAddress string
 )
 
 // Worker is the struct for our RPC server
@@ -43,51 +46,85 @@ func (w *Worker) Shutdown(req stubs.Empty, res *stubs.Empty) (err error) {
 func main() {
 	defer println("Closing worker")
 	// Read in the network port we should listen on, from the commandline argument.
-	// Default to port 8030
+	// Default to port 8010
 	portPtr := flag.String("p", "8010", "port to listen on")
 	flag.Parse()
-
-	println("Starting worker (localhost:" + *portPtr + ")")
+	ourAddress = "localhost:" + *portPtr
+	println("Starting worker (" + ourAddress + ")")
 
 	// Register our RPC client
 	rpc.Register(&Worker{})
 
 	// Create a listener to handle rpc requests
-	listener, _ := net.Listen("tcp", "localhost:"+*portPtr)
+	listener, _ := net.Listen("tcp", ourAddress)
 	defer listener.Close()
 	go rpc.Accept(listener)
 
-	println("Connecting to server")
+	connectToServer()
+
+	// Ticker to ping the server every 10 seconds
+	pingTicker := time.NewTicker(6 * time.Second)
+	for {
+		select {
+		// Ping the server at an interval
+		case <-pingTicker.C:
+			// If we are connected, ping them
+			if server != nil {
+				err := server.Call(stubs.ServerPing, stubs.Empty{}, &stubs.Empty{})
+
+				//If there is an error in pinging them, we have lost connection
+				if err != nil {
+					println("Error pinging server:", err.Error())
+
+					// Close the connection anyway
+					server.Close()
+					server = nil
+					println("Disconnected")
+				}
+			} else {
+				// Otherwise, attempt to connect
+				connectToServer()
+			}
+
+		}
+	}
+}
+
+func connectToServer() bool {
+	println("Attempting to connect to server")
+	// Try and establish a connection to the server
 	newServer, err := rpc.Dial("tcp", "localhost:8020")
 
 	if err != nil {
 		println("Cannot find server:", err.Error())
-		return
+		return false
 	}
-	response := new(stubs.ServerResponse)
 	server = newServer
+	response := new(stubs.ServerResponse)
+
+	// If we have a connection, try and register ourselves as a worker
 	err = server.Call(stubs.ServerConnectWorker,
-		stubs.WorkerConnectRequest{WorkerAddress: "localhost:" + *portPtr}, response)
+		stubs.WorkerConnectRequest{WorkerAddress: ourAddress}, response)
 	if err != nil {
 		println("Connection error", err.Error())
-		return
+		return false
 	} else if response.Success == false {
 		println("Server error", response.Message)
-		return
+		return false
 	}
 
+	// No errors, connection successful!
 	println("Connected!")
-	// Block the main function forever
-	select {}
+	return true
 }
 
 // GAME LOGIC BELOW
 
 // Calculate the next turn, given pointers to the start and end to operate over
-// Return a fragment of the grid with the next turn's cells
-func doTurn(grid [][]bool, startRow, endRow int) (gridFragment stubs.Fragment) {
-	width := len(grid[0])
-	gridFragment = stubs.Fragment{
+// Return a fragment of the board with the next turn's cells
+func doTurn(board [][]bool, startRow, endRow int) (boardFragment stubs.Fragment) {
+	width := len(board[0])
+	boardFragment = stubs.Fragment{
 		StartRow: startRow,
 		EndRow:   endRow,
 		Cells:    make([][]bool, endRow-startRow),
@@ -95,18 +132,18 @@ func doTurn(grid [][]bool, startRow, endRow int) (gridFragment stubs.Fragment) {
 
 	// Iterate over each cell
 	for row := startRow; row < endRow; row++ {
-		gridFragment.Cells[row-startRow] = make([]bool, width)
+		boardFragment.Cells[row-startRow] = make([]bool, width)
 		for col := 0; col < width; col++ {
 
 			// Calculate the next cell state
-			newCell := nextCellState(col, row, grid)
+			newCell := nextCellState(col, row, board)
 
 			// Update the value of the new cell
-			gridFragment.Cells[row-startRow][col] = newCell
+			boardFragment.Cells[row-startRow][col] = newCell
 
 		}
 	}
-	return gridFragment
+	return boardFragment
 }
 
 // Calculate the next cell state according to Game Of Life rules

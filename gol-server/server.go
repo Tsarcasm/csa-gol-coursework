@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math/rand"
 	"net"
 	"net/rpc"
 	"sync"
@@ -52,7 +53,7 @@ func doWorker(board [][]bool, newBoard [][]bool, start, end int, worker *rpc.Cli
 }
 
 // Update board is called every time we want to process a turn
-// This will partition the grid up and send each fragment to a worker
+// This will partition the board up and send each fragment to a worker
 // Workers will copy the new turn onto the newBoard slice
 func updateBoard(board [][]bool, newBoard [][]bool, height, width int) {
 	// Calculate the number of rows each worker thread should use
@@ -151,7 +152,11 @@ func controllerLoop(board [][]bool, height, width, maxTurns int) {
 				// close ourselves
 				listener.Close()
 				return
-
+				// EXTENSION:
+				// If the client presses R then the board will be randomised
+			case 'r':
+				println("Randomising Board")
+				randomiseBoard(board, height, width)
 			}
 		// Tell the controller how many cells are alive every 2 seconds
 		case <-ticker.C:
@@ -165,16 +170,16 @@ func controllerLoop(board [][]bool, height, width, maxTurns int) {
 		// If there are no other interruptions, handle the game turn
 		default:
 			updateBoard(board, newBoard, height, width)
-			// Copy the grid buffer over to the input grid
+			// Copy the board buffer over to the input board
 			for row := 0; row < height; row++ {
 				copy(board[row], newBoard[row])
 			}
 
-			println("Sending turn complete")
+			// println("Sending turn complete")
 			// Tell the controller we have completed a turn
 			// Do this concurrently since we don't need to wait for the controller
-			controller.Call(stubs.ControllerTurnComplete,
-				stubs.SaveBoardRequest{CompletedTurns: maxTurns, Height: height, Width: width, Board: board}, &stubs.Empty{})
+			// controller.Call(stubs.ControllerTurnComplete,
+			// 	stubs.SaveBoardRequest{CompletedTurns: maxTurns, Height: height, Width: width, Board: board}, &stubs.Empty{})
 			turn++
 		}
 
@@ -195,6 +200,23 @@ func controllerLoop(board [][]bool, height, width, maxTurns int) {
 		return
 	}
 	return
+}
+
+// This will randomise a board
+func randomiseBoard(board [][]bool, height, width int) {
+	for row := 0; row < height; row++ {
+		for col := 0; col < width; col++ {
+			// Get a random number from 0.0-1.0
+			r := rand.Float32()
+			// For a smaller number of alive cells, reduce ratio
+			ratio := float32(0.2)
+			if r < ratio {
+				board[row][col] = true
+			} else {
+				board[row][col] = false
+			}
+		}
+	}
 }
 
 // Server structure for RPC functions
@@ -280,6 +302,12 @@ func (s *Server) ConnectWorker(req stubs.WorkerConnectRequest, res *stubs.Server
 
 	res.Message = "Connected!"
 	res.Success = true
+	return
+}
+
+// Ping exists so workers can poll their connection to us
+func (s *Server) Ping(req stubs.Empty, res *stubs.Empty) (err error) {
+	// No need to do anything here
 	return
 }
 

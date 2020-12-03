@@ -68,7 +68,7 @@ func (c *Controller) FinalTurnComplete(req stubs.SaveBoardRequest, res *stubs.Em
 		Alive:          util.GetAliveCells(req.Board),
 	}
 
-	//todo re-enable grid saving on last turn
+	//todo re-enable board saving on last turn
 
 	go saveBoard(req.Board, req.CompletedTurns, c.params, c.channels)
 	// defer func() { c.stopChan <- true }()
@@ -133,7 +133,7 @@ func controller(p Params, c controllerChannels) {
 	println("Reading in file", filename)
 
 	// Load the image and store it in the board
-	gridFromFileInput(board, p.ImageHeight, p.ImageWidth, c.ioInput, c.events)
+	boardFromFileInput(board, p.ImageHeight, p.ImageWidth, c.ioInput, c.events)
 	previous = board
 
 	// Create a RPC server for ourselves
@@ -220,38 +220,39 @@ func runGame(p Params, c controllerChannels, board [][]bool, controller Controll
 
 }
 
-func saveBoard(grid [][]bool, completedTurns int, p Params, c controllerChannels) {
+func saveBoard(board [][]bool, completedTurns int, p Params, c controllerChannels) {
+	return
 	c.ioCommand <- ioOutput
 	filename := strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight) + "x" + strconv.Itoa(completedTurns)
 	println("Saving to file", filename)
 	c.ioFilename <- filename
-	gridToFileOutput(grid, p.ImageHeight, p.ImageWidth, c.ioOutput)
+	boardToFileOutput(board, p.ImageHeight, p.ImageWidth, c.ioOutput)
 }
 
-//Populate a grid from a file input channel, sending events on cells set to alive
-func gridFromFileInput(grid [][]bool, height, width int, fileInput <-chan uint8, events chan<- Event) {
+//Populate a board from a file input channel, sending events on cells set to alive
+func boardFromFileInput(board [][]bool, height, width int, fileInput <-chan uint8, events chan<- Event) {
 	for row := 0; row < height; row++ {
 		for col := 0; col < width; col++ {
 			cell := <-fileInput
 			// Set the cell value to the corresponding image pixel
 			if cell == 0 {
-				grid[row][col] = false
+				board[row][col] = false
 			} else {
-				grid[row][col] = true
-				events <- CellFlipped{
-					CompletedTurns: 0,
-					Cell:           util.Cell{X: col, Y: row},
-				}
+				board[row][col] = true
+				// events <- CellFlipped{
+				// 	CompletedTurns: 0,
+				// 	Cell:           util.Cell{X: col, Y: row},
+				// }
 			}
 		}
 	}
 }
 
-func gridToFileOutput(grid [][]bool, height, width int, fileOutput chan<- uint8) {
+func boardToFileOutput(board [][]bool, height, width int, fileOutput chan<- uint8) {
 	for row := 0; row < height; row++ {
 		for col := 0; col < width; col++ {
 			// If true send 1, else send 0
-			if grid[row][col] {
+			if board[row][col] {
 				fileOutput <- 1
 			} else {
 				fileOutput <- 0

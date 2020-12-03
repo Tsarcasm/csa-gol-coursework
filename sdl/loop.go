@@ -18,6 +18,7 @@ sdlLoop:
 			switch e := event.(type) {
 			case *sdl.KeyboardEvent:
 				switch e.Keysym.Sym {
+
 				case sdl.K_p:
 					keyPresses <- 'p'
 				case sdl.K_s:
@@ -26,6 +27,8 @@ sdlLoop:
 					keyPresses <- 'q'
 				case sdl.K_k:
 					keyPresses <- 'k'
+				case sdl.K_r:
+					keyPresses <- 'r'
 				}
 			}
 		}

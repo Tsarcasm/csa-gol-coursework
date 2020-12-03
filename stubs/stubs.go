@@ -1,8 +1,8 @@
 package stubs
 
 // Fragment stores a section of cells in the board
-// StartRow points to the row in the main grid where this section starts
-// EndRow points to the next row in the main grid after this section ends (like an exclusive upper bound)
+// StartRow points to the row in the main board where this section starts
+// EndRow points to the next row in the main board after this section ends (like an exclusive upper bound)
 type Fragment struct {
 	StartRow int
 	EndRow   int
@@ -38,6 +38,7 @@ func (state State) String() string {
 var ServerStartGame = "Server.StartGame"
 var ServerRegisterKeypress = "Server.RegisterKeypress"
 var ServerConnectWorker = "Server.ConnectWorker"
+var ServerPing = "Server.Ping"
 
 // Controller RPC strings
 var ControllerGameStateChange = "Controller.GameStateChange"

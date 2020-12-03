@@ -11,14 +11,14 @@ type Cell struct {
 	X, Y int
 }
 
-// GetAliveCells returns all the alive cells in a grid
-func GetAliveCells(grid [][]bool) []Cell {
-	height := len(grid)
-	width := len(grid[0])
+// GetAliveCells returns all the alive cells in a board
+func GetAliveCells(board [][]bool) []Cell {
+	height := len(board)
+	width := len(board[0])
 	aliveCells := make([]Cell, 0)
 	for row := 0; row < height; row++ {
 		for col := 0; col < width; col++ {
-			if grid[row][col] == true {
+			if board[row][col] == true {
 				aliveCells = append(aliveCells, Cell{X: col, Y: row})
 			}
 		}

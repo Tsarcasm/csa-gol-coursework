@@ -20,68 +20,76 @@ type distributorChannels struct {
 	keyPresses <-chan rune
 }
 
+// Fragment represents a section of the game board
+// startRow points to the row the section starts at  (inclusive lower bound)
+// endRow points to the row after the end of the section (exclusive upper bound)
+// cells is a slice containing the rows for this section
 type Fragment struct {
 	startRow int
 	endRow   int
 	cells    [][]bool
 }
 
-// distributor divides the work between workers and interacts with other goroutines.
+// distributor splits the work between threads and executes the game loop
+// this function will return when the game has finished or is quit
+// when it returns it will close the events channel
 func distributor(p Params, c distributorChannels) {
-	ticker := time.NewTicker(2 * time.Second)
 	board := make([][]bool, p.ImageHeight)
-
 	// Make a column array for each row
 	for row := 0; row < p.ImageHeight; row++ {
 		board[row] = make([]bool, p.ImageWidth)
 	}
 
-	//Load the image
-	c.ioCommand <- ioInput
-	filename := strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight)
-	println("Reading in file", filename)
-	c.ioFilename <- filename
-	// Covnert image to board
-	boardFromFileInput(board, p.ImageHeight, p.ImageWidth, c.ioInput, c.events)
+	loadBoard(c, p, board)
+
+	// Send an event since the board has now been setup
 	c.events <- TurnComplete{0}
 
-	// Make a board buffer to store the next board state into
-
-	boardFragments := make(chan Fragment, p.Threads)
-
-	println("frag height", p.ImageHeight/p.Threads)
-	var wg sync.WaitGroup
-
-	// Now we can do the game loop
-	boardBuffer := make([][]bool, p.ImageHeight)
-	for row := 0; row < p.ImageHeight; row++ {
-		boardBuffer[row] = make([]bool, p.ImageWidth)
-	}
-	turn := gameLoop(p, board, c, boardFragments, &wg, boardBuffer, ticker)
+	// Run the game loop and store how many turns it processes
+	endTurn := gameLoop(board, p, c)
 
 	// If we've finished all turns ensure turns = the last turn we did
-	if turn > p.Turns {
-		turn = p.Turns
+	if endTurn > p.Turns {
+		endTurn = p.Turns
 	}
 
+	// Send a final turn complete event
 	c.events <- FinalTurnComplete{
-		turn,
-		makeAliveCells(board),
+		endTurn,
+		getAliveCells(board),
 	}
 
 	// Finally, save the image to a new file
-	saveBoard(board, turn, p, c)
+	saveBoard(board, endTurn, p, c)
 
 	// Make sure that the Io has finished any output before exiting.
 	c.ioCommand <- ioCheckIdle
 	<-c.ioIdle
 
-	c.events <- StateChange{turn, Quitting}
+	c.events <- StateChange{endTurn, Quitting}
 	// Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
 	close(c.events)
 }
 
-func gameLoop(p Params, board [][]bool, c distributorChannels, boardFragments chan Fragment, wg *sync.WaitGroup, boardBuffer [][]bool, ticker *time.Ticker) int {
+// This function runs through all of the turns in the game
+// At the start of every turn, it handles input and other interrupts
+// It will return the number of turns it has processed
+// Contents of the board slice are set to the most recent turn result
+func gameLoop(board [][]bool, p Params, c distributorChannels) int {
+	var wg sync.WaitGroup
+
+	// this channel stores the results of the worker threads
+	boardFragments := make(chan Fragment, p.Threads)
+
+	// Make a board buffer to store the next board state into
+	boardBuffer := make([][]bool, p.ImageHeight)
+	for row := 0; row < p.ImageHeight; row++ {
+		boardBuffer[row] = make([]bool, p.ImageWidth)
+	}
+
+	// Ticker triggers us to send an aliveCellsCount event every 2 seconds
+	ticker := time.NewTicker(2 * time.Second)
+
 	// Starting turn is 1
 	turn := 1
 	fragHeight := p.ImageHeight / p.Threads
@@ -97,7 +105,7 @@ func gameLoop(p Params, board [][]bool, c distributorChannels, boardFragments ch
 				end = p.ImageHeight
 			}
 
-			go turnThread(board, turn, c.events, start, end, boardFragments)
+			go workerThread(board, turn, c.events, start, end, boardFragments)
 		}
 
 		// Get the result in from the threads
@@ -127,14 +135,16 @@ func gameLoop(p Params, board [][]bool, c distributorChannels, boardFragments ch
 
 		// Send a turn complete event
 		c.events <- TurnComplete{turn}
+
+		// Check for the ticker or keypresses
 		select {
 		// Every ticker tick send an AliveCellsCount event
 		case <-ticker.C:
 			c.events <- AliveCellsCount{
 				turn,
-				len(makeAliveCells(board)),
+				len(getAliveCells(board)),
 			}
-			//
+			// Handle any keypresses
 		case key := <-c.keyPresses:
 			fmt.Println("Keypress:", key)
 			switch key {
@@ -142,8 +152,6 @@ func gameLoop(p Params, board [][]bool, c distributorChannels, boardFragments ch
 				saveBoard(board, turn, p, c)
 			case 'q':
 				// To quit, just return the turn
-				// Send a quit event
-				c.events <- StateChange{turn, Quitting}
 				return turn
 			case 'p':
 				println("Pausing on turn", turn)
@@ -157,38 +165,34 @@ func gameLoop(p Params, board [][]bool, c distributorChannels, boardFragments ch
 			}
 
 		default:
+			// If there are no keypresses or tickers, go to the next turn
 		}
 
 	}
 	return turn
 }
 
-func saveBoard(board [][]bool, turn int, p Params, c distributorChannels) {
-	c.ioCommand <- ioOutput
-	filename := strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight) + "x" + strconv.Itoa(turn)
-	println("Saving to file", filename)
-	c.ioFilename <- filename
-	boardToFileOutput(board, p.ImageHeight, p.ImageWidth, c.ioOutput)
-}
-
-func turnThread(board [][]bool, turn int, events chan<- Event, startRow, endRow int, fragments chan<- Fragment) {
+// WorkerThread will take a board and calculate the next turn state of a portion of it
+// Pass the whole board slice along with start and end pointers for the section it needs to process
+// It will send the next turn state as a fragment down the fragments channel
+func workerThread(board [][]bool, turn int, events chan<- Event, startRow, endRow int, fragments chan<- Fragment) {
 	width := len(board[0])
+	// Setup the new fragment
 	boardFragment := Fragment{
 		startRow,
 		endRow,
 		make([][]bool, endRow-startRow),
 	}
 
-	// Iterate over each cell
+	// Iterate over the rows we need to process
 	for row := startRow; row < endRow; row++ {
-
+		// Instantiate this row's new cells
 		boardFragment.cells[row-startRow] = make([]bool, width)
 		for col := 0; col < width; col++ {
-
 			// Calculate the next cell state
 			newCell := nextCellState(col, row, board)
 
-			// If the cell has flipped then raise an event
+			// If the cell has flipped then send an event
 			if newCell != board[row][col] {
 				events <- CellFlipped{
 					CompletedTurns: turn,
@@ -198,13 +202,42 @@ func turnThread(board [][]bool, turn int, events chan<- Event, startRow, endRow 
 
 			// Update the value of the new cell
 			boardFragment.cells[row-startRow][col] = newCell
-
 		}
 	}
+	// Send the completed fragment down the channel
 	fragments <- boardFragment
 }
 
-//Populate a board from a file input channel, sending events on cells set to alive
+// Save a board slice to the file
+// This will properly prepare all the channels for writing
+func saveBoard(board [][]bool, turn int, p Params, c distributorChannels) {
+	filename := strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight) + "x" + strconv.Itoa(turn)
+	println("Saving to file", filename)
+
+	// Set the IO channels to prepare for writing
+	c.ioCommand <- ioOutput
+	c.ioFilename <- filename
+
+	boardToFileOutput(board, p.ImageHeight, p.ImageWidth, c.ioOutput)
+}
+
+// Load a board slice from a file
+// This will properly prepare all the channels for reading
+func loadBoard(c distributorChannels, p Params, board [][]bool) {
+	filename := strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight)
+	println("Reading in file", filename)
+
+	// Set the IO channels to prepare for reading
+	c.ioCommand <- ioInput
+	c.ioFilename <- filename
+
+	boardFromFileInput(board, p.ImageHeight, p.ImageWidth, c.ioInput, c.events)
+}
+
+// Populate a board from a file input channel, sending events on cells set to alive
+// Before this is run, two channels must be set:
+// ioCommand <- input
+// ioFilename <- "name"
 func boardFromFileInput(board [][]bool, height, width int, fileInput <-chan uint8, events chan<- Event) {
 	for row := 0; row < height; row++ {
 		for col := 0; col < width; col++ {
@@ -224,6 +257,10 @@ func boardFromFileInput(board [][]bool, height, width int, fileInput <-chan uint
 	}
 }
 
+// Save a file with the contents of a board
+// Before this is run, two channels must be set:
+// ioCommand <- input
+// ioFilename <- "name"
 func boardToFileOutput(board [][]bool, height, width int, fileOutput chan<- uint8) {
 	for row := 0; row < height; row++ {
 		for col := 0; col < width; col++ {
@@ -237,47 +274,43 @@ func boardToFileOutput(board [][]bool, height, width int, fileOutput chan<- uint
 	}
 }
 
-/*
-
-any live cell with fewer than two live neighbours dies
-any live cell with two or three live neighbours is unaffected
-any live cell with more than three live neighbours dies
-any dead cell with exactly three live neighbours becomes alive
-
-*/
-
+// Calculate the next cell state according to Game Of Life rules
+// Returns a bool with the next state of the cell
 func nextCellState(x int, y int, board [][]bool) bool {
-	adj := getNeighbours(x, y, board)
+	// Count the number of adjacent alive cells
+	adj := countAliveNeighbours(x, y, board)
 
+	// Default to dead
 	newState := false
 
+	// Find what will make the cell alive
+
 	if board[y][x] == true {
-		if adj < 2 {
-			newState = false
-		} else if adj > 3 {
-			newState = false
-		} else {
+		if adj == 2 || adj == 3 {
+			// If only 2 or 3 neighbours then stay alive
 			newState = true
 		}
 	} else {
 		if adj == 3 {
+			// If there are 3 neighbours then come alive
 			newState = true
-		} else {
-			newState = false
 		}
 	}
 	return newState
 }
 
-func getNeighbours(x int, y int, board [][]bool) int {
+// Count how many alive neighbours a cell has
+// This will correctly wrap around edges
+func countAliveNeighbours(x int, y int, board [][]bool) int {
 	height := len(board)
 	width := len(board[0])
 	numNeighbours := 0
 
-	// Check all cells in a board around this one
+	// Count all alive cells in the board in a
+	// 1 cell radius of the centre
 	for _x := -1; _x < 2; _x++ {
 		for _y := -1; _y < 2; _y++ {
-			//this cell is not a neighbour
+			// Ignore the centre cell
 			if _x == 0 && _y == 0 {
 				continue
 			}
@@ -294,6 +327,7 @@ func getNeighbours(x int, y int, board [][]bool) int {
 				wrapY = height - 1
 			}
 
+			// test if this cell is alive
 			v := board[wrapY][wrapX]
 			if v == true {
 				numNeighbours++
@@ -304,14 +338,16 @@ func getNeighbours(x int, y int, board [][]bool) int {
 	return numNeighbours
 }
 
-// returns the alive cells in the board
-func makeAliveCells(board [][]bool) []util.Cell {
+// Returns a slice with all the alive cells in the board
+func getAliveCells(board [][]bool) []util.Cell {
 	height := len(board)
 	width := len(board[0])
 	aliveCells := make([]util.Cell, 0)
+	// Check every cell
 	for row := 0; row < height; row++ {
 		for col := 0; col < width; col++ {
 			if board[row][col] == true {
+				// If this cell is alive, add it to the slice
 				aliveCells = append(aliveCells, util.Cell{X: col, Y: row})
 			}
 		}

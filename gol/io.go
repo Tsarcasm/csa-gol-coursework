@@ -49,23 +49,21 @@ const (
 )
 
 // writePgmImage receives an array of bytes and writes it to a pgm file.
-func (io *ioState) writePgmImage(doIo bool) {
+func (io *ioState) writePgmImage() {
 	_ = os.Mkdir("out", os.ModePerm)
 
 	filename := <-io.channels.filename
 	file, ioError := os.Create("out/" + filename + ".pgm")
 	util.Check(ioError)
 	defer file.Close()
-	if doIo {
-		_, _ = file.WriteString("P5\n")
-		//_, _ = file.WriteString("# PGM file writer by pnmmodules (https://github.com/owainkenwayucl/pnmmodules).\n")
-		_, _ = file.WriteString(strconv.Itoa(io.params.ImageWidth))
-		_, _ = file.WriteString(" ")
-		_, _ = file.WriteString(strconv.Itoa(io.params.ImageHeight))
-		_, _ = file.WriteString("\n")
-		_, _ = file.WriteString(strconv.Itoa(255))
-		_, _ = file.WriteString("\n")
-	}
+	_, _ = file.WriteString("P5\n")
+	//_, _ = file.WriteString("# PGM file writer by pnmmodules (https://github.com/owainkenwayucl/pnmmodules).\n")
+	_, _ = file.WriteString(strconv.Itoa(io.params.ImageWidth))
+	_, _ = file.WriteString(" ")
+	_, _ = file.WriteString(strconv.Itoa(io.params.ImageHeight))
+	_, _ = file.WriteString("\n")
+	_, _ = file.WriteString(strconv.Itoa(255))
+	_, _ = file.WriteString("\n")
 	world := make([][]byte, io.params.ImageHeight)
 	for i := range world {
 		world[i] = make([]byte, io.params.ImageWidth)
@@ -81,12 +79,10 @@ func (io *ioState) writePgmImage(doIo bool) {
 		}
 	}
 
-	if doIo {
-		for y := 0; y < io.params.ImageHeight; y++ {
-			for x := 0; x < io.params.ImageWidth; x++ {
-				_, ioError = file.Write([]byte{world[y][x]})
-				util.Check(ioError)
-			}
+	for y := 0; y < io.params.ImageHeight; y++ {
+		for x := 0; x < io.params.ImageWidth; x++ {
+			_, ioError = file.Write([]byte{world[y][x]})
+			util.Check(ioError)
 		}
 	}
 
@@ -146,7 +142,7 @@ func startIo(p Params, c ioChannels) {
 			case ioInput:
 				io.readPgmImage()
 			case ioOutput:
-				io.writePgmImage(true)
+				io.writePgmImage()
 			case ioCheckIdle:
 				io.channels.idle <- true
 			}

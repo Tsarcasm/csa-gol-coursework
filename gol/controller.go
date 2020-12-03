@@ -70,7 +70,7 @@ func (c *Controller) FinalTurnComplete(req stubs.SaveBoardRequest, res *stubs.Em
 
 	//todo re-enable grid saving on last turn
 
-	// go saveGrid(req.Board, req.CompletedTurns, c.p, c.c)
+	go saveBoard(req.Board, req.CompletedTurns, c.params, c.channels)
 	// defer func() { c.stopChan <- true }()
 	stopChan <- true
 	return

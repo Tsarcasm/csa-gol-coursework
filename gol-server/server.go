@@ -4,12 +4,8 @@ import (
 	"fmt"
 	"net"
 	"net/rpc"
-	"os"
 	"sync"
 	"time"
-
-	"github.com/gernest/wow"
-	"github.com/gernest/wow/spin"
 
 	"uk.ac.bris.cs/gameoflife/stubs"
 	"uk.ac.bris.cs/gameoflife/util"
@@ -25,14 +21,13 @@ var (
 	controller *rpc.Client
 	workers    []*worker
 	keypresses chan rune
-	w          *wow.Wow
+	listener   net.Listener
 )
 
 // Setup variables
 func init() {
 	keypresses = make(chan rune, 10)
 	workers = make([]*worker, 0)
-	w = wow.New(os.Stdout, spin.Get(spin.Arc), "")
 }
 
 // Send a portion of the board to a worker to process the turn for
@@ -131,6 +126,28 @@ func controllerLoop(board [][]bool, height, width, maxTurns int) {
 				// Send the board to the controller to save
 				controller.Call(stubs.ControllerSaveBoard,
 					stubs.SaveBoardRequest{CompletedTurns: maxTurns, Height: height, Width: width, Board: board}, &stubs.Empty{})
+			case 'k':
+				println("Controller wants to close everything")
+
+				for w := 0; w < len(workers); w++ {
+					println("Disconnecting worker", w)
+					workers[w].Client.Call(stubs.WorkerShutdown, stubs.Empty{}, &stubs.Empty{})
+					workers[w].Client.Close()
+				}
+
+				// Send them a final turn complete
+				controller.Call(stubs.ControllerFinalTurnComplete,
+					stubs.SaveBoardRequest{
+						CompletedTurns: turn,
+						Height:         height,
+						Width:          width,
+						Board:          board,
+					},
+					&stubs.Empty{})
+
+				// close ourselves
+				listener.Close()
+				return
 
 			}
 		// Tell the controller how many cells are alive every 2 seconds
@@ -209,7 +226,6 @@ func (s *Server) StartGame(req stubs.StartGameRequest, res *stubs.ServerResponse
 
 	// If successful store the controller reference
 	controller = newController
-	w.Stop()
 	println("Controller connected")
 	res.Success = true
 	res.Message = "Connected!"
@@ -276,8 +292,11 @@ func main() {
 	rpc.Register(&Server{})
 
 	// Create a listener to handle rpc requests
-	listener, _ := net.Listen("tcp", "localhost:8020")
-	defer listener.Close()
+	ln, _ := net.Listen("tcp", "localhost:8020")
+	listener = ln
+
+	// This will block until the listener is closed
 	rpc.Accept(listener)
+
 	println("Server closed")
 }

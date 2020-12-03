@@ -53,14 +53,14 @@ func main() {
 	go rpc.Accept(listener)
 
 	println("Connecting to server")
-	server, err := rpc.Dial("tcp", "localhost:8020")
+	newServer, err := rpc.Dial("tcp", "localhost:8020")
 
 	if err != nil {
 		println("Cannot find server:", err.Error())
 		return
 	}
 	response := new(stubs.ServerResponse)
-
+	server = newServer
 	err = server.Call(stubs.ServerConnectWorker,
 		stubs.WorkerConnectRequest{WorkerAddress: "localhost:" + *portPtr}, response)
 	if err != nil {

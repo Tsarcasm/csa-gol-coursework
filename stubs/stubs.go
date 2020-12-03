@@ -48,6 +48,7 @@ var ControllerReportAliveCells = "Controller.ReportAliveCells"
 
 // Worker RPC strings
 var WorkerDoTurn = "Worker.DoTurn"
+var WorkerShutdown = "Worker.Shutdown"
 
 // ServerResponse contains a result from a standard server RPC call
 // Success indicates if the call executed its desired function

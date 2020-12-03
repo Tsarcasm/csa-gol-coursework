@@ -35,15 +35,33 @@ func init() {
 	w = wow.New(os.Stdout, spin.Get(spin.Arc), "")
 }
 
-// This is called each turn and passed the current board and a newBoard buffer
+// Send a portion of the board to a worker to process the turn for
+// Copy the result into the correct place in the new board
+func doWorker(board [][]bool, newBoard [][]bool, start, end int, worker *rpc.Client, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	// Spawn a new worker thread
+	response := stubs.DoTurnResponse{}
+	err := worker.Call(stubs.WorkerDoTurn, stubs.DoTurnRequest{
+		Board: board, FragStart: start, FragEnd: end}, &response)
+	if err != nil {
+		fmt.Println(err)
+	}
+	// Copy the fragment back into the board
+	for row := response.Frag.StartRow; row < response.Frag.EndRow; row++ {
+		copy(newBoard[row], response.Frag.Cells[row-response.Frag.StartRow])
+	}
+}
+
+// Update board is called every time we want to process a turn
 // This will partition the grid up and send each fragment to a worker
-// Workers will copy the next turn onto the newBoard
+// Workers will copy the new turn onto the newBoard slice
 func updateBoard(board [][]bool, newBoard [][]bool, height, width int) {
 	// Calculate the number of rows each worker thread should use
 	numWorkers := len(workers)
 	fragHeight := height / numWorkers
 
-	// Create a WaitGroup to wait for all workers to finish
+	// Create a WaitGroup so we only return when all workers have finished
 	var wg sync.WaitGroup
 	wg.Add(numWorkers)
 
@@ -61,49 +79,16 @@ func updateBoard(board [][]bool, newBoard [][]bool, height, width int) {
 	wg.Wait()
 }
 
-// Send a portion of the board to a worker to process the turn for
-// Copy the result into the correct place in the new board
-func doWorker(board [][]bool, newBoard [][]bool, start, end int, worker *rpc.Client, wg *sync.WaitGroup) {
-	defer wg.Done()
-
-	// Spawn a new worker thread
-	response := stubs.DoTurnResponse{}
-	err := worker.Call(stubs.WorkerDoTurn, stubs.DoTurnRequest{
-		Board: board, FragStart: start, FragEnd: end}, &response)
-	if err != nil {
-		fmt.Println(err)
-	}
-	// Copy the fragment back into the board
-	// println(response.Frag.StartRow)
-	// println(response.Frag.EndRow)
-	for row := response.Frag.StartRow; row < response.Frag.EndRow; row++ {
-		copy(newBoard[row], response.Frag.Cells[row-response.Frag.StartRow])
-	}
-
-}
-
-// returns the alive cells in the grid
-func getAliveCells(grid [][]bool) []util.Cell {
-	height := len(grid)
-	width := len(grid[0])
-	aliveCells := make([]util.Cell, 0)
-	for row := 0; row < height; row++ {
-		for col := 0; col < width; col++ {
-			if grid[row][col] == true {
-				aliveCells = append(aliveCells, util.Cell{X: col, Y: row})
-			}
-		}
-	}
-	return aliveCells
-}
-
-func handleClient(board [][]bool, height, width, maxTurns int) {
-	// When loop is finished, set client to empty
+// This function contains the game loop and sends messages to the client
+// It will return when the final turn is completed or there is an error
+// When it returns, the client is disconnected and the server can accept new connections
+func clientLoop(board [][]bool, height, width, maxTurns int) {
+	// When loop is finished, disconnect client
 	defer func() {
 		client.Close()
 		client = nil
 		println("Disconnected Client")
-		w.Start()
+		// w.Start()
 	}()
 
 	ticker := time.NewTicker(2 * time.Second)
@@ -119,6 +104,7 @@ func handleClient(board [][]bool, height, width, maxTurns int) {
 	// Update the board each turn
 	for turn < maxTurns {
 		select {
+		// Handle incoming keypresses
 		case key := <-keypresses:
 			println("Received keypress: ", key)
 			switch key {
@@ -143,18 +129,20 @@ func handleClient(board [][]bool, height, width, maxTurns int) {
 			case 's':
 				println("Telling client to save board")
 				// Send the board to the client to save
-				client.Call(stubs.ClientSaveBoard, stubs.SaveBoardRequest{
-					CompletedTurns: maxTurns, Height: height, Width: width, Board: board}, &stubs.Empty{})
+				client.Call(stubs.ClientSaveBoard,
+					stubs.SaveBoardRequest{CompletedTurns: maxTurns, Height: height, Width: width, Board: board}, &stubs.Empty{})
 
 			}
+		// Tell the client how many cells are alive every 2 seconds
 		case <-ticker.C:
 			println("Telling client number of cells alive")
 			err := client.Call(stubs.ClientReportAliveCells,
-				stubs.AliveCellsReport{CompletedTurns: turn, NumAlive: len(getAliveCells(board))}, &stubs.Empty{})
+				stubs.AliveCellsReport{CompletedTurns: turn, NumAlive: len(util.GetAliveCells(board))}, &stubs.Empty{})
 			if err != nil {
 				fmt.Println("Error sending num alive ", err)
 				return
 			}
+		// If there are no other interruptions, handle the game turn
 		default:
 			updateBoard(board, newBoard, height, width)
 			// Copy the grid buffer over to the input grid
@@ -163,13 +151,10 @@ func handleClient(board [][]bool, height, width, maxTurns int) {
 			}
 
 			println("Sending turn complete")
-			err := client.Call(stubs.ClientTurnComplete, stubs.SaveBoardRequest{
-				CompletedTurns: maxTurns, Height: height, Width: width, Board: board},
-				&stubs.Empty{})
-			if err != nil {
-				fmt.Println("Error sending turn complete ", err)
-				return
-			}
+			// Tell the client we have completed a turn
+			// Do this concurrently since we don't need to wait for the client
+			client.Call(stubs.ClientTurnComplete,
+				stubs.SaveBoardRequest{CompletedTurns: maxTurns, Height: height, Width: width, Board: board}, &stubs.Empty{})
 			turn++
 		}
 
@@ -184,7 +169,7 @@ func handleClient(board [][]bool, height, width, maxTurns int) {
 			Width:          width,
 			Board:          board,
 		},
-		&stubs.ClientResponse{})
+		&stubs.Empty{})
 	if err != nil {
 		fmt.Println("Error sending final turn complete ", err)
 		return
@@ -195,7 +180,7 @@ func handleClient(board [][]bool, height, width, maxTurns int) {
 // Server structure for RPC functions
 type Server struct{}
 
-// StartGame is called by the client to attempt to connect
+// StartGame is called by the client when it wants to connect and start a game
 func (s *Server) StartGame(req stubs.StartGameRequest, res *stubs.ServerResponse) (err error) {
 	println("Received request to start a game")
 	// If we already have a client respond false
@@ -230,17 +215,18 @@ func (s *Server) StartGame(req stubs.StartGameRequest, res *stubs.ServerResponse
 	res.Message = "Connected!"
 
 	// Run the client handler goroutine
-	go handleClient(req.Board, req.Height, req.Width, req.MaxTurns)
+	go clientLoop(req.Board, req.Height, req.Width, req.MaxTurns)
 	return
 }
 
+// RegisterKeypress is called by clients when a key is pressed on their SDL window
 func (s *Server) RegisterKeypress(req stubs.KeypressRequest, res *stubs.ServerResponse) (err error) {
 	println("Received keypress request")
 	keypresses <- rune(req.Key)
 	return
 }
 
-// Methods called by the workers
+// ConnectWorker is called by workers who want to connect
 func (s *Server) ConnectWorker(req stubs.WorkerConnectRequest, res *stubs.ServerResponse) (err error) {
 	println("Worker at", req.WorkerAddress, "wants to connect")
 	// Try to connect to the workers RPC
@@ -277,20 +263,14 @@ func (s *Server) ConnectWorker(req stubs.WorkerConnectRequest, res *stubs.Server
 }
 
 func main() {
-
 	// Read in the network port we should listen on, from the commandline argument.
 	// Default to port 8030
 	// portPtr := flag.String("port", ":8030", "port to listen on")
 	// flag.Parse()
 	println("Started server")
 
-	w.Start()
-	w.Text(" Awaiting connections")
-	// w.Stop()
-	// time.Sleep(2 * time.Second)
-	// w.Text("Very emojis").Spinner(spin.Get(spin.Hearts))
-	// time.Sleep(2 * time.Second)
-	// w.PersistWith(spin.Spinner{Frames: []string{"👍"}}, " Wow!")
+	// w.Start()
+	// w.Text(" Awaiting connections")
 
 	// Register our RPC client
 	rpc.Register(&Server{})
@@ -298,10 +278,6 @@ func main() {
 	// Create a listener to handle rpc requests
 	listener, _ := net.Listen("tcp", "localhost:8020")
 	defer listener.Close()
-	go rpc.Accept(listener)
-
-	select {}
-
-	//Todo remove this
-	println("End of main function")
+	rpc.Accept(listener)
+	println("Server closed")
 }

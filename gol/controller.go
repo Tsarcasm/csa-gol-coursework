@@ -117,7 +117,7 @@ func (c *Controller) ReportAliveCells(req stubs.AliveCellsReport, res *stubs.Emp
 }
 
 // distributor divides the work between workers and interacts with other goroutines.
-func distributor(p Params, c controllerChannels) {
+func controller(p Params, c controllerChannels) {
 	println("Starting new game")
 	// Create a new board to store 0th turn
 	board := make([][]bool, p.ImageHeight)

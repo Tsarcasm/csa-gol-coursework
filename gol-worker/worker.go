@@ -22,14 +22,17 @@ var (
 // Worker is the struct for our RPC server
 type Worker struct{}
 
-
+// DoTurn is called by the server when it wants to calculate a new turn
+// It will pass the board and fragment pointers
 func (w *Worker) DoTurn(req stubs.DoTurnRequest, res *stubs.DoTurnResponse) (err error) {
 	fmt.Print(".")
+	// Get the turn result
 	frag := doTurn(req.Board, req.FragStart, req.FragEnd)
 	res.Frag = frag
 	return
 }
 
+// Shutdown is called by the server to disconnect and close the worker
 func (w *Worker) Shutdown(req stubs.Empty, res *stubs.Empty) (err error) {
 	println("Received shutdown request")
 	server.Close()
@@ -81,7 +84,7 @@ func main() {
 // GAME LOGIC BELOW
 
 // Calculate the next turn, given pointers to the start and end to operate over
-// Return a fragment of the grid with the next turn's cells 
+// Return a fragment of the grid with the next turn's cells
 func doTurn(grid [][]bool, startRow, endRow int) (gridFragment stubs.Fragment) {
 	width := len(grid[0])
 	gridFragment = stubs.Fragment{
@@ -169,4 +172,3 @@ func countAliveNeighbours(x int, y int, board [][]bool) int {
 
 	return numNeighbours
 }
-

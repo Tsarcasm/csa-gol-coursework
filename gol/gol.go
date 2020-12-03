@@ -25,7 +25,7 @@ func Run(p Params, events chan<- Event, keyPresses <-chan rune) {
 		ioImageOutput,
 		keyPresses,
 	}
-	go distributor(p, controllerChannels)
+	go controller(p, controllerChannels)
 
 	ioChannels := ioChannels{
 		command:  ioCommand,

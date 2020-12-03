@@ -12,11 +12,14 @@ import (
 	// "uk.ac.bris.cs/gameoflife/util"
 )
 
+// worker struct stores the address of a worker alongside the client object
+// This helps us handle worker disconnects and reconnects more cleanly
 type worker struct {
 	Client  *rpc.Client
 	Address string
 }
 
+// Global variables
 var (
 	controller *rpc.Client
 	workers    []*worker
@@ -24,7 +27,7 @@ var (
 	listener   net.Listener
 )
 
-// Setup variables
+// Setup variables on program load
 func init() {
 	keypresses = make(chan rune, 10)
 	workers = make([]*worker, 0)
@@ -208,6 +211,7 @@ func (s *Server) StartGame(req stubs.StartGameRequest, res *stubs.ServerResponse
 		return
 	}
 
+	// Controllers can't connect if we have no workers
 	if len(workers) == 0 {
 		println("We have no workers available")
 		res.Message = "Server has no workers"
@@ -238,14 +242,14 @@ func (s *Server) StartGame(req stubs.StartGameRequest, res *stubs.ServerResponse
 // RegisterKeypress is called by controller when a key is pressed on their SDL window
 func (s *Server) RegisterKeypress(req stubs.KeypressRequest, res *stubs.ServerResponse) (err error) {
 	println("Received keypress request")
-	keypresses <- rune(req.Key)
+	keypresses <- req.Key
 	return
 }
 
 // ConnectWorker is called by workers who want to connect
 func (s *Server) ConnectWorker(req stubs.WorkerConnectRequest, res *stubs.ServerResponse) (err error) {
 	println("Worker at", req.WorkerAddress, "wants to connect")
-	// Try to connect to the workers RPC
+	// Try to connect to the worker's RPC
 	workerClient, err := rpc.Dial("tcp", req.WorkerAddress)
 	if err != nil {
 		println("Error connecting to worker: ", err.Error())
@@ -267,6 +271,7 @@ func (s *Server) ConnectWorker(req stubs.WorkerConnectRequest, res *stubs.Server
 			break
 		}
 	}
+	// If they don't already exist then add them as a new worker
 	if !foundExisting {
 		workers = append(workers, &newWorker)
 	}

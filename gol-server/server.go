@@ -22,10 +22,11 @@ type worker struct {
 
 // Global variables
 var (
-	controller *rpc.Client
-	workers    []*worker
-	keypresses chan rune
-	listener   net.Listener
+	controller   *rpc.Client
+	workers      []*worker
+	workersMutex sync.Mutex
+	keypresses   chan rune
+	listener     net.Listener
 )
 
 // Setup variables on program load
@@ -36,15 +37,25 @@ func init() {
 
 // Send a portion of the board to a worker to process the turn for
 // Copy the result into the correct place in the new board
-func doWorker(board [][]bool, newBoard [][]bool, start, end int, worker *rpc.Client, wg *sync.WaitGroup) {
+func doWorker(board [][]bool, newBoard [][]bool, start, end int, worker *worker, wg *sync.WaitGroup, failFlag *bool, failMu *sync.Mutex) {
 	defer wg.Done()
 
 	// Spawn a new worker thread
 	response := stubs.DoTurnResponse{}
-	err := worker.Call(stubs.WorkerDoTurn, stubs.DoTurnRequest{
+
+	// Send the whole board and the fragment to the worker
+	err := worker.Client.Call(stubs.WorkerDoTurn, stubs.DoTurnRequest{
 		Board: board, FragStart: start, FragEnd: end}, &response)
 	if err != nil {
-		fmt.Println(err)
+		println("Error getting fragment:", err.Error())
+		// If we encounter an error then set the fail flag to true
+		// Lock the mutex here to get exclusive access
+		failMu.Lock()
+		*failFlag = true
+		failMu.Unlock()
+		// Disconnect the worker
+		disconnectWorker(worker)
+		return
 	}
 	// Copy the fragment back into the board
 	for row := response.Frag.StartRow; row < response.Frag.EndRow; row++ {
@@ -55,15 +66,21 @@ func doWorker(board [][]bool, newBoard [][]bool, start, end int, worker *rpc.Cli
 // Update board is called every time we want to process a turn
 // This will partition the board up and send each fragment to a worker
 // Workers will copy the new turn onto the newBoard slice
-func updateBoard(board [][]bool, newBoard [][]bool, height, width int) {
+// Returns true if there have been no errors (and the whole board has been set)
+func updateBoard(board [][]bool, newBoard [][]bool, height, width int) bool {
+	// Create a WaitGroup so we only return when all workers have finished
+	var wg sync.WaitGroup
+	failFlag := false
+	failMu := &sync.Mutex{}
+
+	//todo: do we need a lock here?
+	// Lock workers so no new workers can be added / removed until all goroutines are started
+	workersMutex.Lock()
+
 	// Calculate the number of rows each worker thread should use
 	numWorkers := len(workers)
 	fragHeight := height / numWorkers
-
-	// Create a WaitGroup so we only return when all workers have finished
-	var wg sync.WaitGroup
 	wg.Add(numWorkers)
-
 	for worker := 0; worker < numWorkers; worker++ {
 		// Rows to process turns for
 		start := worker * fragHeight
@@ -73,9 +90,21 @@ func updateBoard(board [][]bool, newBoard [][]bool, height, width int) {
 			end = height
 		}
 		// Update this fragment
-		go doWorker(board, newBoard, start, end, workers[worker].Client, &wg)
+		go doWorker(board, newBoard, start, end, workers[worker], &wg, &failFlag, failMu)
 	}
+
+	// We can release workers now
+	workersMutex.Unlock()
+	// Wait for all workers to finish
 	wg.Wait()
+
+	// Check that there have been no fails
+	if failFlag {
+		// One or more of the workers have hit a problem
+		return false
+	}
+
+	return true
 }
 
 // This function contains the game loop and sends messages to the controller
@@ -87,7 +116,6 @@ func controllerLoop(board [][]bool, height, width, maxTurns int) {
 		controller.Close()
 		controller = nil
 		println("Disconnected Controller")
-		// w.Start()
 	}()
 
 	ticker := time.NewTicker(2 * time.Second)
@@ -169,18 +197,26 @@ func controllerLoop(board [][]bool, height, width, maxTurns int) {
 			}
 		// If there are no other interruptions, handle the game turn
 		default:
-			updateBoard(board, newBoard, height, width)
-			// Copy the board buffer over to the input board
-			for row := 0; row < height; row++ {
-				copy(board[row], newBoard[row])
-			}
+			// Get the next board state (this will send calls to workers)
+			success := updateBoard(board, newBoard, height, width)
 
-			// println("Sending turn complete")
-			// Tell the controller we have completed a turn
-			// Do this concurrently since we don't need to wait for the controller
-			// controller.Call(stubs.ControllerTurnComplete,
-			// 	stubs.SaveBoardRequest{CompletedTurns: maxTurns, Height: height, Width: width, Board: board}, &stubs.Empty{})
-			turn++
+			if success {
+				// Copy the board buffer over to the input board
+				for row := 0; row < height; row++ {
+					copy(board[row], newBoard[row])
+				}
+				// println("Sending turn complete")
+				// Tell the controller we have completed a turn
+				// Do this concurrently since we don't need to wait for the controller
+				// controller.Call(stubs.ControllerTurnComplete,
+				// 	stubs.SaveBoardRequest{CompletedTurns: maxTurns, Height: height, Width: width, Board: board}, &stubs.Empty{})
+				turn++
+			} else {
+				// We hit a problem (e.g. a worker disconnected)
+				// Retry the turn
+				println("Encountered a problem handling turn", turn)
+				println("Retrying this turn")
+			}
 		}
 
 	}
@@ -217,6 +253,27 @@ func randomiseBoard(board [][]bool, height, width int) {
 			}
 		}
 	}
+}
+
+// Disconnect a worker and remove it from the workers slice
+func disconnectWorker(worker *worker) {
+	// Lock the workers slice to get exclusive access
+	workersMutex.Lock()
+	defer workersMutex.Unlock()
+
+	// Find the index of the worker
+	for w := 0; w < len(workers); w++ {
+		if workers[w].Address == worker.Address {
+			// Try and close the RPC connection
+			worker.Client.Close()
+			// Rebuild the workers slice without this one in it
+			workers = append(workers[:w], workers[w+1:]...)
+			println("Worker", worker.Address, "disconnected")
+			return
+		}
+	}
+	// We don't contain this worker, do nothing
+	println("We aren't connected to worker", worker.Address)
 }
 
 // Server structure for RPC functions
@@ -281,6 +338,10 @@ func (s *Server) ConnectWorker(req stubs.WorkerConnectRequest, res *stubs.Server
 	// If successful add the worker to the workers slice
 	newWorker := worker{Address: req.WorkerAddress, Client: workerClient}
 	foundExisting := false
+
+	// Lock the slice to get exclusive access
+	workersMutex.Lock()
+
 	// Make sure we don't already contain this worker
 	for w := 0; w < len(workers); w++ {
 		if workers[w].Address == req.WorkerAddress {
@@ -297,8 +358,10 @@ func (s *Server) ConnectWorker(req stubs.WorkerConnectRequest, res *stubs.Server
 	if !foundExisting {
 		workers = append(workers, &newWorker)
 	}
-
 	println("Worker added! We now have", len(workers), "workers.")
+
+	// Unlock the mutex
+	workersMutex.Unlock()
 
 	res.Message = "Connected!"
 	res.Success = true

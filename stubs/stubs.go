@@ -6,7 +6,7 @@ package stubs
 type Fragment struct {
 	StartRow int
 	EndRow   int
-	Cells    [][]bool
+	BitBoard *BitBoard
 }
 
 // State represents a change in the state of execution.
@@ -113,7 +113,7 @@ type AliveCellsReport struct {
 }
 
 type Halo struct {
-	Board    [][]bool
+	BitBoard *BitBoard
 	Offset   int
 	StartPtr int
 	EndPtr   int
@@ -132,3 +132,49 @@ type DoTurnResponse struct {
 
 // Empty is used when there is no information for an RPC function to return
 type Empty struct{}
+
+type BitBoard struct {
+	RowLength int
+	NumRows   int
+	Bytes     []byte
+}
+
+func BitBoardFromSlice(board [][]bool, height, width int) *BitBoard {
+	// Allocate a new bitboard
+	bitBoard := new(BitBoard)
+	bitBoard.RowLength = width
+	bitBoard.NumRows = height
+	bitBoard.Bytes = make([]byte, width*height)
+
+	for row := 0; row < height; row++ {
+		for col := 0; col < width; col++ {
+			bit := uint(row*width + col)
+			byteIdx := uint(bit / 8)
+			if board[row][col] == true {
+				bitBoard.Bytes[byteIdx] = bitBoard.Bytes[byteIdx] | (1 << (bit % 8))
+			} else {
+				bitBoard.Bytes[byteIdx] = bitBoard.Bytes[byteIdx] & (^(1 << (bit % 8)))
+			}
+		}
+	}
+
+	return bitBoard
+}
+
+func (b *BitBoard) ToSlice() [][]bool {
+	newBoard := make([][]bool, b.NumRows)
+	for row := 0; row < b.NumRows; row++ {
+		newBoard[row] = make([]bool, b.RowLength)
+		for col := 0; col < b.RowLength; col++ {
+			bit := uint(row*b.RowLength + col)
+			byteIdx := uint(bit / 8)
+
+			if (b.Bytes[byteIdx] & (1 << (bit % 8))) > 0 {
+				newBoard[row][col] = true
+			} else {
+				newBoard[row][col] = false
+			}
+		}
+	}
+	return newBoard
+}

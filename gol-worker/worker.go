@@ -125,27 +125,31 @@ func connectToServer() bool {
 // Calculate the next turn, given pointers to the start and end to operate over
 // Return a fragment of the board with the next turn's cells
 func doTurn(halo stubs.Halo) (boardFragment stubs.Fragment) {
-	width := len(halo.Board[0])
-	boardFragment = stubs.Fragment{
-		StartRow: halo.StartPtr,
-		EndRow:   halo.EndPtr,
-		Cells:    make([][]bool, halo.EndPtr-halo.StartPtr),
-	}
+	board := halo.BitBoard.ToSlice()
+	width := halo.BitBoard.RowLength
+	newBoard := make([][]bool, halo.EndPtr-halo.StartPtr)
 
 	// Iterate over each cell
 	for row := 0; row < halo.EndPtr-halo.StartPtr; row++ {
-		boardFragment.Cells[row] = make([]bool, width)
+		newBoard[row] = make([]bool, width)
 		for col := 0; col < width; col++ {
 
 			// Calculate the next cell state
-			newCell := nextCellState(col, row+halo.Offset, halo.Board)
+			newCell := nextCellState(col, row+halo.Offset, board)
 
 			// Update the value of the new cell
-			boardFragment.Cells[row][col] = newCell
+			newBoard[row][col] = newCell
 
 		}
 	}
+	boardFragment = stubs.Fragment{
+		StartRow: halo.StartPtr,
+		EndRow:   halo.EndPtr,
+		BitBoard:    stubs.BitBoardFromSlice(newBoard, halo.EndPtr-halo.StartPtr, width),
+	}
+
 	return boardFragment
+
 }
 
 // Calculate the next cell state according to Game Of Life rules

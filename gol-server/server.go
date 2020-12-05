@@ -58,12 +58,13 @@ func doWorker(halo stubs.Halo, newBoard [][]bool, worker *worker, wg *sync.WaitG
 		return
 	}
 	// Copy the fragment back into the board
+	respCells := response.Frag.BitBoard.ToSlice()
 	for row := response.Frag.StartRow; row < response.Frag.EndRow; row++ {
-		copy(newBoard[row], response.Frag.Cells[row-response.Frag.StartRow])
+		copy(newBoard[row], respCells[row-response.Frag.StartRow])
 	}
 }
 
-func makeHalo(worker int, fragHeight int, numWorkers int, height int, board [][]bool) stubs.Halo {
+func makeHalo(worker int, fragHeight int, numWorkers int, height, width int, board [][]bool) stubs.Halo {
 	cells := make([][]bool, 0)
 
 	start := worker * fragHeight
@@ -94,7 +95,7 @@ func makeHalo(worker int, fragHeight int, numWorkers int, height int, board [][]
 	// println("work", workPtr)
 	// println("=====")
 	return stubs.Halo{
-		Board:    cells,
+		BitBoard: stubs.BitBoardFromSlice(cells, len(cells), width),
 		Offset:   workPtr,
 		StartPtr: start,
 		EndPtr:   end,
@@ -121,7 +122,9 @@ func updateBoard(board [][]bool, newBoard [][]bool, height, width int) bool {
 	wg.Add(numWorkers)
 	for worker := 0; worker < numWorkers; worker++ {
 		// Update this fragment
-		go doWorker(makeHalo(worker, fragHeight, numWorkers, height, board), newBoard, workers[worker], &wg, &failFlag, failMu)
+		halo := makeHalo(worker, fragHeight, numWorkers, height, width, board)
+		println("Sending ", len(halo.BitBoard.Bytes), " bytes")
+		go doWorker(halo, newBoard, workers[worker], &wg, &failFlag, failMu)
 	}
 
 	// We can release workers now

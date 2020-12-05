@@ -37,7 +37,7 @@ func init() {
 
 // Send a portion of the board to a worker to process the turn for
 // Copy the result into the correct place in the new board
-func doWorker(board [][]bool, newBoard [][]bool, start, end int, worker *worker, wg *sync.WaitGroup, failFlag *bool, failMu *sync.Mutex) {
+func doWorker(halo stubs.Halo, newBoard [][]bool, worker *worker, wg *sync.WaitGroup, failFlag *bool, failMu *sync.Mutex) {
 	defer wg.Done()
 
 	// Spawn a new worker thread
@@ -45,7 +45,7 @@ func doWorker(board [][]bool, newBoard [][]bool, start, end int, worker *worker,
 
 	// Send the whole board and the fragment to the worker
 	err := worker.Client.Call(stubs.WorkerDoTurn, stubs.DoTurnRequest{
-		Board: board, FragStart: start, FragEnd: end}, &response)
+		Halo: halo}, &response)
 	if err != nil {
 		println("Error getting fragment:", err.Error())
 		// If we encounter an error then set the fail flag to true
@@ -60,6 +60,44 @@ func doWorker(board [][]bool, newBoard [][]bool, start, end int, worker *worker,
 	// Copy the fragment back into the board
 	for row := response.Frag.StartRow; row < response.Frag.EndRow; row++ {
 		copy(newBoard[row], response.Frag.Cells[row-response.Frag.StartRow])
+	}
+}
+
+func makeHalo(worker int, fragHeight int, numWorkers int, height int, board [][]bool) stubs.Halo {
+	cells := make([][]bool, 0)
+
+	start := worker * fragHeight
+	end := (worker + 1) * fragHeight
+
+	if worker == numWorkers-1 {
+		end = height
+	}
+
+	downPtr := end % height
+	upPtr := (start - 1)
+	if upPtr == -1 {
+		upPtr = height - 1
+	}
+	workPtr := 0
+
+	if upPtr != end-1 {
+		cells = append(cells, board[upPtr])
+		workPtr = 1
+	}
+	for row := start; row < end; row++ {
+		cells = append(cells, board[row])
+	}
+
+	if downPtr != start {
+		cells = append(cells, board[downPtr])
+	}
+	// println("work", workPtr)
+	// println("=====")
+	return stubs.Halo{
+		Board:    cells,
+		Offset:   workPtr,
+		StartPtr: start,
+		EndPtr:   end,
 	}
 }
 
@@ -82,15 +120,8 @@ func updateBoard(board [][]bool, newBoard [][]bool, height, width int) bool {
 	fragHeight := height / numWorkers
 	wg.Add(numWorkers)
 	for worker := 0; worker < numWorkers; worker++ {
-		// Rows to process turns for
-		start := worker * fragHeight
-		end := (worker + 1) * fragHeight
-		// Final worker gets any rows that can't be evenly split
-		if worker == numWorkers-1 {
-			end = height
-		}
 		// Update this fragment
-		go doWorker(board, newBoard, start, end, workers[worker], &wg, &failFlag, failMu)
+		go doWorker(makeHalo(worker, fragHeight, numWorkers, height, board), newBoard, workers[worker], &wg, &failFlag, failMu)
 	}
 
 	// We can release workers now
@@ -206,8 +237,8 @@ func controllerLoop(board [][]bool, height, width, maxTurns int) {
 					copy(board[row], newBoard[row])
 				}
 				// println("Sending turn complete")
-				// Tell the controller we have completed a turn
-				// Do this concurrently since we don't need to wait for the controller
+				// // Tell the controller we have completed a turn
+				// // Do this concurrently since we don't need to wait for the controller
 				// controller.Call(stubs.ControllerTurnComplete,
 				// 	stubs.SaveBoardRequest{CompletedTurns: maxTurns, Height: height, Width: width, Board: board}, &stubs.Empty{})
 				turn++

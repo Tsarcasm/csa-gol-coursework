@@ -112,12 +112,17 @@ type AliveCellsReport struct {
 	NumAlive       int
 }
 
+type Halo struct {
+	Board    [][]bool
+	Offset   int
+	StartPtr int
+	EndPtr   int
+}
+
 // DoTurnRequest is passed to workers to ask them to calculate the next turn
 // It sends the whole board along with fragment pointers for their portion to calculate
 type DoTurnRequest struct {
-	Board     [][]bool
-	FragStart int
-	FragEnd   int
+	Halo Halo
 }
 
 // DoTurnResponse is returned by workers to the server containing a fragment of the new board

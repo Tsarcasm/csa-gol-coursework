@@ -28,10 +28,12 @@ type Worker struct{}
 // DoTurn is called by the server when it wants to calculate a new turn
 // It will pass the board and fragment pointers
 func (w *Worker) DoTurn(req stubs.DoTurnRequest, res *stubs.DoTurnResponse) (err error) {
+	// os.Exit(0)
 	fmt.Print(".")
 	// Get the turn result
-	frag := doTurn(req.Board, req.FragStart, req.FragEnd)
+	frag := doTurn(req.Halo)
 	res.Frag = frag
+
 	return
 }
 
@@ -63,7 +65,7 @@ func main() {
 	connectToServer()
 
 	// Ticker to ping the server every 10 seconds
-	pingTicker := time.NewTicker(6 * time.Second)
+	pingTicker := time.NewTicker(2 * time.Second)
 	for {
 		select {
 		// Ping the server at an interval
@@ -122,24 +124,24 @@ func connectToServer() bool {
 
 // Calculate the next turn, given pointers to the start and end to operate over
 // Return a fragment of the board with the next turn's cells
-func doTurn(board [][]bool, startRow, endRow int) (boardFragment stubs.Fragment) {
-	width := len(board[0])
+func doTurn(halo stubs.Halo) (boardFragment stubs.Fragment) {
+	width := len(halo.Board[0])
 	boardFragment = stubs.Fragment{
-		StartRow: startRow,
-		EndRow:   endRow,
-		Cells:    make([][]bool, endRow-startRow),
+		StartRow: halo.StartPtr,
+		EndRow:   halo.EndPtr,
+		Cells:    make([][]bool, halo.EndPtr-halo.StartPtr),
 	}
 
 	// Iterate over each cell
-	for row := startRow; row < endRow; row++ {
-		boardFragment.Cells[row-startRow] = make([]bool, width)
+	for row := 0; row < halo.EndPtr-halo.StartPtr; row++ {
+		boardFragment.Cells[row] = make([]bool, width)
 		for col := 0; col < width; col++ {
 
 			// Calculate the next cell state
-			newCell := nextCellState(col, row, board)
+			newCell := nextCellState(col, row+halo.Offset, halo.Board)
 
 			// Update the value of the new cell
-			boardFragment.Cells[row-startRow][col] = newCell
+			boardFragment.Cells[row][col] = newCell
 
 		}
 	}

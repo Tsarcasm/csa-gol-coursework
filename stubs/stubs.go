@@ -136,7 +136,77 @@ type Empty struct{}
 type BitBoard struct {
 	RowLength int
 	NumRows   int
-	Bytes     []byte
+	Bytes     RLEBitArray
+}
+
+type RLEBitArray struct {
+	TotalBits uint
+	Runs      []byte
+	// This is for use when constructing the array
+	lastBit bool
+}
+
+func GetByteArrayCell(bytes []byte, height, width int, row, col int) bool {
+	bit := uint(row*width + col)
+	byteIdx := uint(bit / 8)
+
+	if (bytes[byteIdx] & (1 << (bit % 8))) > 0 {
+		return true
+	} else {
+		return false
+	}
+}
+
+func (b *RLEBitArray) ToByteArray() []byte {
+	bytes := make([]byte, b.TotalBits/8)
+	val := false
+	bit := uint(0)
+	// Loop through each run
+	for _, run := range b.Runs {
+		// Set identical bits for the length of the run
+		for r := byte(0); r < run; r++ {
+			// Set the required bit in the byte array
+			byteIdx := uint(bit / 8)
+			if val {
+				bytes[byteIdx] = bytes[byteIdx] | (1 << (bit % 8))
+			} else {
+				bytes[byteIdx] = bytes[byteIdx] & (^(1 << (bit % 8)))
+			}
+			// Increment pointer
+			bit++
+		}
+		// Since the run is over, flip the set value
+		val = !val
+	}
+	return bytes
+}
+
+func (b *RLEBitArray) addBit(val bool) {
+	// If this is the first bit
+	if len(b.Runs) == 0 {
+		// default to starting with a 0 bit
+		if val {
+			// If the first value is true then add a 0-length run at the start
+			b.Runs = append(b.Runs, 0, 1)
+		} else {
+			// Else append a 1 length run at the start
+			b.Runs = append(b.Runs, 1)
+		}
+	} else {
+		// if we're adding another of the same bits, increase the run length
+		if val == b.lastBit {
+			// If we've maxed out the run length, start a new run (skipping one)
+			if b.Runs[len(b.Runs)-1] == 255 {
+				b.Runs = append(b.Runs, 0, 1)
+			} else {
+				b.Runs[len(b.Runs)-1]++
+			}
+		} else {
+			// Otherwise, make a new run
+			b.Runs = append(b.Runs, 1)
+		}
+	}
+	b.lastBit = val
 }
 
 func BitBoardFromSlice(board [][]bool, height, width int) *BitBoard {
@@ -144,17 +214,11 @@ func BitBoardFromSlice(board [][]bool, height, width int) *BitBoard {
 	bitBoard := new(BitBoard)
 	bitBoard.RowLength = width
 	bitBoard.NumRows = height
-	bitBoard.Bytes = make([]byte, width*height)
+	bitBoard.Bytes = RLEBitArray{lastBit: false, TotalBits: uint(height * width)}
 
 	for row := 0; row < height; row++ {
 		for col := 0; col < width; col++ {
-			bit := uint(row*width + col)
-			byteIdx := uint(bit / 8)
-			if board[row][col] == true {
-				bitBoard.Bytes[byteIdx] = bitBoard.Bytes[byteIdx] | (1 << (bit % 8))
-			} else {
-				bitBoard.Bytes[byteIdx] = bitBoard.Bytes[byteIdx] & (^(1 << (bit % 8)))
-			}
+			bitBoard.Bytes.addBit(board[row][col])
 		}
 	}
 
@@ -163,13 +227,14 @@ func BitBoardFromSlice(board [][]bool, height, width int) *BitBoard {
 
 func (b *BitBoard) ToSlice() [][]bool {
 	newBoard := make([][]bool, b.NumRows)
+	bytes := b.Bytes.ToByteArray()
 	for row := 0; row < b.NumRows; row++ {
 		newBoard[row] = make([]bool, b.RowLength)
 		for col := 0; col < b.RowLength; col++ {
 			bit := uint(row*b.RowLength + col)
 			byteIdx := uint(bit / 8)
 
-			if (b.Bytes[byteIdx] & (1 << (bit % 8))) > 0 {
+			if (bytes[byteIdx] & (1 << (bit % 8))) > 0 {
 				newBoard[row][col] = true
 			} else {
 				newBoard[row][col] = false

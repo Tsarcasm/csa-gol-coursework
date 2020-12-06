@@ -142,7 +142,6 @@ func doTurn(halo stubs.Halo, threads int) (boardFragment stubs.Fragment) {
 	if threads > height {
 		threads = height
 	}
-
 	var wg sync.WaitGroup
 	// Split the board into threads
 	fragHeight := height / threads

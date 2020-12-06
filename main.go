@@ -63,6 +63,7 @@ func main() {
 	keyPresses := make(chan rune, 10)
 	events := make(chan gol.Event)
 	gol.Run(params, events, keyPresses)
+
 	// Only start SDL if we want to use it
 	if *useSdl {
 		sdl.Start(params, events, keyPresses)

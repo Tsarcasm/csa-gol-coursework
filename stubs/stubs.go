@@ -69,6 +69,7 @@ type StartGameRequest struct {
 	Height   int
 	Width    int
 	MaxTurns int
+	Threads  int
 
 	Board [][]bool
 }
@@ -115,7 +116,8 @@ type AliveCellsReport struct {
 // DoTurnRequest is passed to workers to ask them to calculate the next turn
 // It sends the whole board along with fragment pointers for their portion to calculate
 type DoTurnRequest struct {
-	Halo Halo
+	Halo    Halo
+	Threads int
 }
 
 // DoTurnResponse is returned by workers to the server containing a fragment of the new board

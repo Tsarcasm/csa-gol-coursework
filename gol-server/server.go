@@ -23,7 +23,8 @@ type worker struct {
 
 // Global variables
 var (
-	controller   *rpc.Client
+	controller *rpc.Client
+
 	workers      []*worker
 	workersMutex sync.Mutex
 	keypresses   chan rune
@@ -38,15 +39,15 @@ func init() {
 
 // Send a portion of the board to a worker to process the turn for
 // Copy the result into the correct place in the new board
-func doWorker(halo stubs.Halo, newBoard [][]bool, worker *worker, wg *sync.WaitGroup, failFlag *bool, failMu *sync.Mutex) {
+func doWorker(halo stubs.Halo, newBoard [][]bool, threads int, worker *worker, wg *sync.WaitGroup, failFlag *bool, failMu *sync.Mutex) {
 	defer wg.Done()
 
 	// Spawn a new worker thread
 	response := stubs.DoTurnResponse{}
 
 	// Send the halo to the client, get the result
-	err := worker.Client.Call(stubs.WorkerDoTurn, stubs.DoTurnRequest{
-		Halo: halo}, &response)
+	err := worker.Client.Call(stubs.WorkerDoTurn,
+		stubs.DoTurnRequest{Halo: halo, Threads: threads}, &response)
 	if err != nil {
 		println("Error getting fragment:", err.Error())
 		// If we encounter an error then set the fail flag to true
@@ -113,7 +114,7 @@ func makeHalo(worker int, fragHeight int, numWorkers int, height, width int, boa
 // This will partition the board up and send each fragment to a worker
 // Workers will copy the new turn onto the newBoard slice
 // Returns true if there have been no errors (and the whole board has been set)
-func updateBoard(board [][]bool, newBoard [][]bool, height, width int) bool {
+func updateBoard(board [][]bool, newBoard [][]bool, height, width int, threads int) bool {
 	// Create a WaitGroup so we only return when all workers have finished
 	var wg sync.WaitGroup
 	// EXTENSION: Worker goroutines will flag if a worker fails to communicate
@@ -137,7 +138,7 @@ func updateBoard(board [][]bool, newBoard [][]bool, height, width int) bool {
 			// Get all the cells required to update this fragment
 			halo := makeHalo(workerIdx, fragHeight, numWorkers, height, width, board)
 			// Send the fragment to the worker
-			doWorker(halo, newBoard, worker, &wg, &failFlag, failMu)
+			doWorker(halo, newBoard, threads, worker, &wg, &failFlag, failMu)
 		}(w, thisWorker)
 	}
 
@@ -157,7 +158,7 @@ func updateBoard(board [][]bool, newBoard [][]bool, height, width int) bool {
 // This function contains the game loop and sends messages to the controller
 // It will return when the final turn is completed or there is an error
 // When it returns, the controller is disconnected and the server can accept new connections
-func controllerLoop(board [][]bool, height, width, maxTurns int) {
+func controllerLoop(board [][]bool, height, width, maxTurns, threads int) {
 	// When loop is finished, disconnect controller
 	defer func() {
 		controller.Close()
@@ -248,7 +249,7 @@ func controllerLoop(board [][]bool, height, width, maxTurns int) {
 		// If there are no other interruptions, handle the game turn
 		default:
 			// Get the next board state (this will send calls to workers)
-			success := updateBoard(board, newBoard, height, width)
+			success := updateBoard(board, newBoard, height, width, threads)
 
 			if success {
 				// Copy the board buffer over to the input board
@@ -365,7 +366,7 @@ func (s *Server) StartGame(req stubs.StartGameRequest, res *stubs.ServerResponse
 	res.Message = "Connected!"
 
 	// Run the controller loop goroutine
-	go controllerLoop(req.Board, req.Height, req.Width, req.MaxTurns)
+	go controllerLoop(req.Board, req.Height, req.Width, req.MaxTurns, req.Threads)
 	return
 }
 

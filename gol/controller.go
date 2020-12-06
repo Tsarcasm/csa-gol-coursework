@@ -185,6 +185,7 @@ func runGame(p Params, c controllerChannels, board [][]bool, controller Controll
 			Height:            p.ImageHeight,
 			Width:             p.ImageWidth,
 			MaxTurns:          p.Turns,
+			Threads:           p.Threads,
 			Board:             board,
 		}, response)
 
@@ -238,10 +239,10 @@ func boardFromFileInput(board [][]bool, height, width int, fileInput <-chan uint
 				board[row][col] = false
 			} else {
 				board[row][col] = true
-				// events <- CellFlipped{
-				// 	CompletedTurns: 0,
-				// 	Cell:           util.Cell{X: col, Y: row},
-				// }
+				events <- CellFlipped{
+					CompletedTurns: 0,
+					Cell:           util.Cell{X: col, Y: row},
+				}
 			}
 		}
 	}

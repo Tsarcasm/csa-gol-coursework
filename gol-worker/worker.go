@@ -2,10 +2,11 @@ package main
 
 import (
 	"flag"
-	"fmt"
+	// "fmt"
 	"net"
 	"net/rpc"
 	"os"
+	"sync"
 	"time"
 
 	"uk.ac.bris.cs/gameoflife/stubs"
@@ -24,9 +25,9 @@ type Worker struct{}
 // DoTurn is called by the server when it wants to calculate a new turn
 // It will pass the board and fragment pointers
 func (w *Worker) DoTurn(req stubs.DoTurnRequest, res *stubs.DoTurnResponse) (err error) {
-	fmt.Print(".")
+	// fmt.Print(".")
 	// Get the turn result
-	frag := doTurn(req.Halo)
+	frag := doTurn(req.Halo, req.Threads)
 	res.Frag = frag
 
 	return
@@ -131,24 +132,37 @@ func connectToServer() bool {
 
 // Calculate the next turn, given pointers to the start and end to operate over
 // Return a fragment of the board with the next turn's cells
-func doTurn(halo stubs.Halo) (boardFragment stubs.Fragment) {
+func doTurn(halo stubs.Halo, threads int) (boardFragment stubs.Fragment) {
 	width := halo.BitBoard.RowLength
 	board := halo.BitBoard.Bytes.Decode()
-	newBoard := make([][]bool, halo.EndPtr-halo.StartPtr)
+	height := halo.EndPtr - halo.StartPtr
+	newBoard := make([][]bool, height)
 
-	// Iterate over each cell
-	for row := 0; row < halo.EndPtr-halo.StartPtr; row++ {
-		newBoard[row] = make([]bool, width)
-		for col := 0; col < width; col++ {
-
-			// Calculate the next cell state
-			newCell := nextCellState(col, row+halo.Offset, board, halo.BitBoard.NumRows, halo.BitBoard.RowLength)
-
-			// Update the value of the new cell
-			newBoard[row][col] = newCell
-
-		}
+	// Don't allow there to be more threads than rows
+	if threads > height {
+		threads = height
 	}
+
+	var wg sync.WaitGroup
+	// Split the board into threads
+	fragHeight := height / threads
+	for i := 0; i < threads; i++ {
+		// Calculate the bounds for this thread
+		start := i * fragHeight
+		end := (i + 1) * fragHeight
+		if i == threads-1 {
+			end = height
+		}
+		// Add this thread to the waitgroup
+		wg.Add(1)
+		// Iterate over each cell
+		go updateRegion(start, end, halo, newBoard, width, board, &wg)
+	}
+
+	// Wait for all threads to finish
+	wg.Wait()
+
+	// Create a fragment from the results of the threads
 	boardFragment = stubs.Fragment{
 		StartRow: halo.StartPtr,
 		EndRow:   halo.EndPtr,
@@ -157,6 +171,21 @@ func doTurn(halo stubs.Halo) (boardFragment stubs.Fragment) {
 
 	return boardFragment
 
+}
+
+// Calculate the next cell state for all cells within bounds
+func updateRegion(start, end int, halo stubs.Halo, newBoard [][]bool, width int, board []byte, wg *sync.WaitGroup) {
+	// Iterate through the region
+	for row := start; row < end; row++ {
+		newBoard[row] = make([]bool, width)
+		for col := 0; col < width; col++ {
+			// Apply game of life rules to this cell
+			newCell := nextCellState(col, row+halo.Offset, board, halo.BitBoard.NumRows, halo.BitBoard.RowLength)
+			// Save the result in the new board
+			newBoard[row][col] = newCell
+		}
+	}
+	wg.Done()
 }
 
 // Calculate the next cell state according to Game Of Life rules
@@ -168,7 +197,7 @@ func nextCellState(x int, y int, board []byte, bHeight, bWidth int) bool {
 	// Default to dead
 	newState := false
 
-	// Find what will make the cell alive
+	// Find what will make a cell come to life
 	if stubs.GetBitArrayCell(board, bHeight, bWidth, y, x) == true {
 		if adj == 2 || adj == 3 {
 			// If only 2 or 3 neighbours then stay alive

@@ -112,13 +112,6 @@ type AliveCellsReport struct {
 	NumAlive       int
 }
 
-type Halo struct {
-	BitBoard *BitBoard
-	Offset   int
-	StartPtr int
-	EndPtr   int
-}
-
 // DoTurnRequest is passed to workers to ask them to calculate the next turn
 // It sends the whole board along with fragment pointers for their portion to calculate
 type DoTurnRequest struct {
@@ -133,12 +126,29 @@ type DoTurnResponse struct {
 // Empty is used when there is no information for an RPC function to return
 type Empty struct{}
 
+// Halo is a subset of a board containing all the cells required to calculate the next turn cells
+// between two parts of the board
+// It stores the board state using a BitBoard, to save space
+type Halo struct {
+	BitBoard *BitBoard
+	Offset   int
+	StartPtr int
+	EndPtr   int
+}
+
+// BitBoard stores a whole board using individual bits instead of bytes
+// This divides space required by 8
+// EXTENSION: bits are stored in a Run Length Encoded bit array
 type BitBoard struct {
 	RowLength int
 	NumRows   int
 	Bytes     RLEBitArray
 }
 
+// RLEBitArray compresses an array of bits using Run Length Encoding
+// A run is a number of identical bits, maximum run length is 255
+// Each time a new run starts represents a change in value
+// Starting value is false
 type RLEBitArray struct {
 	TotalBits uint
 	Runs      []byte
@@ -146,18 +156,22 @@ type RLEBitArray struct {
 	lastBit bool
 }
 
-func GetByteArrayCell(bytes []byte, height, width int, row, col int) bool {
+// GetBitArrayCell returns a cell in a bit array as if the array was a 2d slice
+func GetBitArrayCell(bytes []byte, height, width int, row, col int) bool {
 	bit := uint(row*width + col)
-	byteIdx := uint(bit / 8)
-
-	if (bytes[byteIdx] & (1 << (bit % 8))) > 0 {
+	// Perform bitwise operations to get the byte and bit indices
+	byteIdx := uint(bit >> 3)
+	bitIdx := bit & 7
+	// Return a boolean based on the bit value
+	if (bytes[byteIdx] & (1 << (bitIdx))) > 0 {
 		return true
-	} else {
-		return false
 	}
+	return false
 }
 
-func (b *RLEBitArray) ToByteArray() []byte {
+// Decode "decodes" a RLE bit array to an array of bytes
+func (b *RLEBitArray) Decode() []byte {
+	// Array of bytes to store the bitarray
 	bytes := make([]byte, b.TotalBits/8)
 	val := false
 	bit := uint(0)
@@ -165,12 +179,14 @@ func (b *RLEBitArray) ToByteArray() []byte {
 	for _, run := range b.Runs {
 		// Set identical bits for the length of the run
 		for r := byte(0); r < run; r++ {
-			// Set the required bit in the byte array
+			// Perform bitwise operations to get the byte and bit indices
 			byteIdx := uint(bit / 8)
+			bitIdx := bit & 7
+			// Store the value in the bit array
 			if val {
-				bytes[byteIdx] = bytes[byteIdx] | (1 << (bit % 8))
+				bytes[byteIdx] = bytes[byteIdx] | (1 << (bitIdx))
 			} else {
-				bytes[byteIdx] = bytes[byteIdx] & (^(1 << (bit % 8)))
+				bytes[byteIdx] = bytes[byteIdx] & (^(1 << (bitIdx)))
 			}
 			// Increment pointer
 			bit++
@@ -181,6 +197,8 @@ func (b *RLEBitArray) ToByteArray() []byte {
 	return bytes
 }
 
+// addBit is used when constructing the RLEBitArray
+// It will add the bit onto the end of the array, preserving encoding
 func (b *RLEBitArray) addBit(val bool) {
 	// If this is the first bit
 	if len(b.Runs) == 0 {
@@ -209,6 +227,7 @@ func (b *RLEBitArray) addBit(val bool) {
 	b.lastBit = val
 }
 
+// BitBoardFromSlice will construct a BitBoard from a 2d board slice
 func BitBoardFromSlice(board [][]bool, height, width int) *BitBoard {
 	// Allocate a new bitboard
 	bitBoard := new(BitBoard)
@@ -216,6 +235,7 @@ func BitBoardFromSlice(board [][]bool, height, width int) *BitBoard {
 	bitBoard.NumRows = height
 	bitBoard.Bytes = RLEBitArray{lastBit: false, TotalBits: uint(height * width)}
 
+	// Add all cells to the bitarray
 	for row := 0; row < height; row++ {
 		for col := 0; col < width; col++ {
 			bitBoard.Bytes.addBit(board[row][col])
@@ -225,16 +245,24 @@ func BitBoardFromSlice(board [][]bool, height, width int) *BitBoard {
 	return bitBoard
 }
 
+// ToSlice unpacks a bitboard back to a 2d board slice
 func (b *BitBoard) ToSlice() [][]bool {
+	// Create the new board 2d slice
 	newBoard := make([][]bool, b.NumRows)
-	bytes := b.Bytes.ToByteArray()
+	// Decode the RLE bits
+	bytes := b.Bytes.Decode()
+	// Set each cell in the new board
 	for row := 0; row < b.NumRows; row++ {
 		newBoard[row] = make([]bool, b.RowLength)
 		for col := 0; col < b.RowLength; col++ {
+			// Get the index of this cell's bit in the bitarray
 			bit := uint(row*b.RowLength + col)
+			// Perform bitwise operations to get the byte and bit indices
 			byteIdx := uint(bit / 8)
+			bitIdx := bit & 7
 
-			if (bytes[byteIdx] & (1 << (bit % 8))) > 0 {
+			// Set the cell from the value in the bit array
+			if (bytes[byteIdx] & (1 << (bitIdx))) > 0 {
 				newBoard[row][col] = true
 			} else {
 				newBoard[row][col] = false

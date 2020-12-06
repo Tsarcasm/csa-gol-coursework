@@ -13,7 +13,7 @@ func benchmarkGol(b *testing.B) {
 	params := gol.Params{
 		ImageWidth:  512,
 		ImageHeight: 512,
-		Turns:       1000,
+		Turns:       10000,
 		Threads:     64}
 	events := make(chan gol.Event)
 

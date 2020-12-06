@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"math/rand"
 	"net"
@@ -43,7 +44,7 @@ func doWorker(halo stubs.Halo, newBoard [][]bool, worker *worker, wg *sync.WaitG
 	// Spawn a new worker thread
 	response := stubs.DoTurnResponse{}
 
-	// Send the whole board and the fragment to the worker
+	// Send the halo to the client, get the result
 	err := worker.Client.Call(stubs.WorkerDoTurn, stubs.DoTurnRequest{
 		Halo: halo}, &response)
 	if err != nil {
@@ -64,38 +65,44 @@ func doWorker(halo stubs.Halo, newBoard [][]bool, worker *worker, wg *sync.WaitG
 	}
 }
 
+// Create a "halo" of cells containing only the cells required to calculat the next turn
+// Take the whole board and return a halo which can be passed to a worker
 func makeHalo(worker int, fragHeight int, numWorkers int, height, width int, board [][]bool) stubs.Halo {
+	// This will hold all the cells that will be stored in  the halo
 	cells := make([][]bool, 0)
 
+	// Find the boundaries for this worker
 	start := worker * fragHeight
 	end := (worker + 1) * fragHeight
-
 	if worker == numWorkers-1 {
 		end = height
 	}
 
-	downPtr := end % height
-	upPtr := (start - 1)
+	// DownPtr and UpPtr point to the rows of the board below and abole the boundary this worker calculates for
+	downPtr := end % height // "max row + 1"
+	upPtr := (start - 1)    // "min row - 1"
 	if upPtr == -1 {
 		upPtr = height - 1
 	}
+	// WorkPtr points to the the row the worker should start calculating new cells for
 	workPtr := 0
 
+	// Add the UpPtr row if wouldn't be in the board anyway
 	if upPtr != end-1 {
 		cells = append(cells, board[upPtr])
 		workPtr = 1
 	}
+	// Add rows we want to calculate the next turn of
 	for row := start; row < end; row++ {
 		cells = append(cells, board[row])
 	}
-
+	// Add the DownPtr row if isn't included in the board
 	if downPtr != start {
 		cells = append(cells, board[downPtr])
 	}
-	// println("work", workPtr)
-	// println("=====")
+	// Return a new halo for these cells
 	return stubs.Halo{
-		BitBoard: stubs.BitBoardFromSlice(cells, len(cells), width),
+		BitBoard: stubs.BitBoardFromSlice(cells, len(cells), width), // Convert the grid into a bitboard
 		Offset:   workPtr,
 		StartPtr: start,
 		EndPtr:   end,
@@ -109,10 +116,12 @@ func makeHalo(worker int, fragHeight int, numWorkers int, height, width int, boa
 func updateBoard(board [][]bool, newBoard [][]bool, height, width int) bool {
 	// Create a WaitGroup so we only return when all workers have finished
 	var wg sync.WaitGroup
+	// EXTENSION: Worker goroutines will flag if a worker fails to communicate
+	// We can then disconnect the worker and retry the turn
+	// Assume we start with no fails
 	failFlag := false
 	failMu := &sync.Mutex{}
 
-	//todo: do we need a lock here?
 	// Lock workers so no new workers can be added / removed until all goroutines are started
 	workersMutex.Lock()
 
@@ -142,7 +151,6 @@ func updateBoard(board [][]bool, newBoard [][]bool, height, width int) bool {
 		// One or more of the workers have hit a problem
 		return false
 	}
-
 	return true
 }
 
@@ -157,6 +165,7 @@ func controllerLoop(board [][]bool, height, width, maxTurns int) {
 		println("Disconnected Controller")
 	}()
 
+	// This ticker signals us to send turns complete every 2 seconds
 	ticker := time.NewTicker(2 * time.Second)
 
 	turn := 0
@@ -228,8 +237,10 @@ func controllerLoop(board [][]bool, height, width, maxTurns int) {
 		// Tell the controller how many cells are alive every 2 seconds
 		case <-ticker.C:
 			println("Telling controller number of cells alive")
+			// Make the RPC call
 			err := controller.Call(stubs.ControllerReportAliveCells,
 				stubs.AliveCellsReport{CompletedTurns: turn, NumAlive: len(util.GetAliveCells(board))}, &stubs.Empty{})
+			// If there was an error then the client has disconnected, stop the game
 			if err != nil {
 				fmt.Println("Error sending num alive ", err)
 				return
@@ -272,18 +283,19 @@ func controllerLoop(board [][]bool, height, width, maxTurns int) {
 		&stubs.Empty{})
 	if err != nil {
 		fmt.Println("Error sending final turn complete ", err)
-		return
 	}
+	// End the game
 	return
 }
 
+// EXTENSION: Randomise board function
 // This will randomise a board
 func randomiseBoard(board [][]bool, height, width int) {
 	for row := 0; row < height; row++ {
 		for col := 0; col < width; col++ {
 			// Get a random number from 0.0-1.0
 			r := rand.Float32()
-			// For a smaller number of alive cells, reduce ratio
+			// For a smaller number of alive cells, reduce the ratio
 			ratio := float32(0.2)
 			if r < ratio {
 				board[row][col] = true
@@ -294,7 +306,7 @@ func randomiseBoard(board [][]bool, height, width int) {
 	}
 }
 
-// Disconnect a worker and remove it from the workers slice
+// Cleanly disconnect a worker and remove it from the workers slice
 func disconnectWorker(worker *worker) {
 	// Lock the workers slice to get exclusive access
 	workersMutex.Lock()
@@ -352,7 +364,7 @@ func (s *Server) StartGame(req stubs.StartGameRequest, res *stubs.ServerResponse
 	res.Success = true
 	res.Message = "Connected!"
 
-	// Run the controller handler goroutine
+	// Run the controller loop goroutine
 	go controllerLoop(req.Board, req.Height, req.Width, req.MaxTurns)
 	return
 }
@@ -360,6 +372,7 @@ func (s *Server) StartGame(req stubs.StartGameRequest, res *stubs.ServerResponse
 // RegisterKeypress is called by controller when a key is pressed on their SDL window
 func (s *Server) RegisterKeypress(req stubs.KeypressRequest, res *stubs.ServerResponse) (err error) {
 	println("Received keypress request")
+	// Send the keypress down down the keypresses channel
 	keypresses <- req.Key
 	return
 }
@@ -416,18 +429,15 @@ func (s *Server) Ping(req stubs.Empty, res *stubs.Empty) (err error) {
 func main() {
 	// Read in the network port we should listen on, from the commandline argument.
 	// Default to port 8030
-	// portPtr := flag.String("port", ":8030", "port to listen on")
-	// flag.Parse()
+	portPtr := flag.String("port", "8020", "port to listen on")
+	flag.Parse()
 	println("Started server")
-
-	// w.Start()
-	// w.Text(" Awaiting connections")
 
 	// Register our RPC server
 	rpc.Register(&Server{})
 
 	// Create a listener to handle rpc requests
-	ln, _ := net.Listen("tcp", "localhost:8020")
+	ln, _ := net.Listen("tcp", "localhost:"+*portPtr)
 	listener = ln
 
 	// This will block until the listener is closed

@@ -1,25 +1,21 @@
 package main
 
 import (
-	// "bufio"
-	// 	"encoding/gob"
-	"fmt"
-	"time"
-
-	// 	"log"
-	// 	"net"
-
 	"flag"
+	"fmt"
 	"net"
 	"net/rpc"
 	"os"
+	"time"
 
 	"uk.ac.bris.cs/gameoflife/stubs"
 )
 
+// Global variables
 var (
-	server     *rpc.Client
-	ourAddress string
+	server        *rpc.Client
+	serverAddress string
+	ourAddress    string
 )
 
 // Worker is the struct for our RPC server
@@ -28,7 +24,6 @@ type Worker struct{}
 // DoTurn is called by the server when it wants to calculate a new turn
 // It will pass the board and fragment pointers
 func (w *Worker) DoTurn(req stubs.DoTurnRequest, res *stubs.DoTurnResponse) (err error) {
-	// os.Exit(0)
 	fmt.Print(".")
 	// Get the turn result
 	frag := doTurn(req.Halo)
@@ -48,10 +43,14 @@ func (w *Worker) Shutdown(req stubs.Empty, res *stubs.Empty) (err error) {
 func main() {
 	defer println("Closing worker")
 	// Read in the network port we should listen on, from the commandline argument.
-	// Default to port 8010
 	portPtr := flag.String("p", "8010", "port to listen on")
+	// Read in the network address of the server, from the commandline
+	serverAddressPtr := flag.String("s", "localhost:8020", "server address")
+
+	// Store addresses
 	flag.Parse()
 	ourAddress = "localhost:" + *portPtr
+	serverAddress = *serverAddressPtr
 	println("Starting worker (" + ourAddress + ")")
 
 	// Register our RPC client
@@ -60,8 +59,10 @@ func main() {
 	// Create a listener to handle rpc requests
 	listener, _ := net.Listen("tcp", ourAddress)
 	defer listener.Close()
+	// Asynchronously handle RPC requests
 	go rpc.Accept(listener)
 
+	// Try and connect to the server for the first time
 	connectToServer()
 
 	// Ticker to ping the server every 10 seconds
@@ -72,6 +73,7 @@ func main() {
 		case <-pingTicker.C:
 			// If we are connected, ping them
 			if server != nil {
+				// Ping the server
 				err := server.Call(stubs.ServerPing, stubs.Empty{}, &stubs.Empty{})
 
 				//If there is an error in pinging them, we have lost connection
@@ -84,7 +86,7 @@ func main() {
 					println("Disconnected")
 				}
 			} else {
-				// Otherwise, attempt to connect
+				// Otherwise, attempt to connect to the server
 				connectToServer()
 			}
 
@@ -92,10 +94,13 @@ func main() {
 	}
 }
 
+// Attempt to connect to the server
+// Returns true if we successfully connected
+// This will also set the server global variable
 func connectToServer() bool {
-	println("Attempting to connect to server")
+	println("Attempting to connect to server ", serverAddress)
 	// Try and establish a connection to the server
-	newServer, err := rpc.Dial("tcp", "localhost:8020")
+	newServer, err := rpc.Dial("tcp", serverAddress)
 
 	if err != nil {
 		println("Cannot find server:", err.Error())
@@ -126,7 +131,7 @@ func connectToServer() bool {
 // Return a fragment of the board with the next turn's cells
 func doTurn(halo stubs.Halo) (boardFragment stubs.Fragment) {
 	width := halo.BitBoard.RowLength
-	board := halo.BitBoard.Bytes.ToByteArray()
+	board := halo.BitBoard.Bytes.Decode()
 	newBoard := make([][]bool, halo.EndPtr-halo.StartPtr)
 
 	// Iterate over each cell
@@ -145,7 +150,7 @@ func doTurn(halo stubs.Halo) (boardFragment stubs.Fragment) {
 	boardFragment = stubs.Fragment{
 		StartRow: halo.StartPtr,
 		EndRow:   halo.EndPtr,
-		BitBoard: stubs.BitBoardFromSlice(newBoard, halo.EndPtr-halo.StartPtr, width),
+		BitBoard: stubs.BitBoardFromSlice(newBoard, halo.EndPtr-halo.StartPtr, width), // Create a new bitboard
 	}
 
 	return boardFragment
@@ -162,8 +167,7 @@ func nextCellState(x int, y int, board []byte, bHeight, bWidth int) bool {
 	newState := false
 
 	// Find what will make the cell alive
-
-	if stubs.GetByteArrayCell(board, bHeight, bWidth, y, x) == true {
+	if stubs.GetBitArrayCell(board, bHeight, bWidth, y, x) == true {
 		if adj == 2 || adj == 3 {
 			// If only 2 or 3 neighbours then stay alive
 			newState = true
@@ -204,7 +208,7 @@ func countAliveNeighbours(x int, y int, board []byte, height, width int) int {
 			}
 
 			// test if this cell is alive
-			v := stubs.GetByteArrayCell(board, height, width, wrapY, wrapX)
+			v := stubs.GetBitArrayCell(board, height, width, wrapY, wrapX)
 			if v == true {
 				numNeighbours++
 			}

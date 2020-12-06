@@ -158,7 +158,7 @@ func updateBoard(board [][]bool, newBoard [][]bool, height, width int, threads i
 // This function contains the game loop and sends messages to the controller
 // It will return when the final turn is completed or there is an error
 // When it returns, the controller is disconnected and the server can accept new connections
-func controllerLoop(board [][]bool, height, width, maxTurns, threads int) {
+func controllerLoop(board [][]bool, height, width, maxTurns, threads int, visualUpdates bool) {
 	// When loop is finished, disconnect controller
 	defer func() {
 		controller.Close()
@@ -256,11 +256,13 @@ func controllerLoop(board [][]bool, height, width, maxTurns, threads int) {
 				for row := 0; row < height; row++ {
 					copy(board[row], newBoard[row])
 				}
-				// println("Sending turn complete")
-				// // Tell the controller we have completed a turn
-				// // Do this concurrently since we don't need to wait for the controller
-				// controller.Call(stubs.ControllerTurnComplete,
-				// 	stubs.SaveBoardRequest{CompletedTurns: maxTurns, Height: height, Width: width, Board: board}, &stubs.Empty{})
+				if visualUpdates {
+					println("Sending turn complete")
+					// Tell the controller we have completed a turn
+					// Do this concurrently since we don't need to wait for the controller
+					controller.Call(stubs.ControllerTurnComplete,
+						stubs.SaveBoardRequest{CompletedTurns: maxTurns, Height: height, Width: width, Board: board}, &stubs.Empty{})
+				}
 				turn++
 			} else {
 				// We hit a problem (e.g. a worker disconnected)
@@ -366,7 +368,7 @@ func (s *Server) StartGame(req stubs.StartGameRequest, res *stubs.ServerResponse
 	res.Message = "Connected!"
 
 	// Run the controller loop goroutine
-	go controllerLoop(req.Board, req.Height, req.Width, req.MaxTurns, req.Threads)
+	go controllerLoop(req.Board, req.Height, req.Width, req.MaxTurns, req.Threads, req.VisualUpdates)
 	return
 }
 

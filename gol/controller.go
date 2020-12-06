@@ -14,6 +14,7 @@ import (
 	"uk.ac.bris.cs/gameoflife/util"
 )
 
+// Channel Container structure
 type controllerChannels struct {
 	events     chan<- Event
 	ioCommand  chan<- ioCommand
@@ -29,18 +30,9 @@ type Controller struct {
 	params   Params
 	channels controllerChannels
 	state    stubs.State
-}
-
-var (
 	previous [][]bool
 	stopChan chan bool
-)
-
-func init() {
-	stopChan = make(chan bool)
 }
-
-// Todo: improve the comments here
 
 // GameStateChange is called by the server to report a change in game state
 func (c *Controller) GameStateChange(req stubs.StateChangeReport, res *stubs.Empty) (err error) {
@@ -53,7 +45,7 @@ func (c *Controller) GameStateChange(req stubs.StateChangeReport, res *stubs.Emp
 	}
 	c.state = req.New
 	if req.New == stubs.Quitting {
-		stopChan <- true
+		c.stopChan <- true
 	}
 	return
 }
@@ -72,7 +64,7 @@ func (c *Controller) FinalTurnComplete(req stubs.SaveBoardRequest, res *stubs.Em
 
 	go saveBoard(req.Board, req.CompletedTurns, c.params, c.channels)
 	// defer func() { c.stopChan <- true }()
-	stopChan <- true
+	c.stopChan <- true
 	return
 }
 
@@ -83,7 +75,7 @@ func (c *Controller) TurnComplete(req stubs.SaveBoardRequest, res *stubs.Empty) 
 	for row := 0; row < req.Height; row++ {
 		for col := 0; col < req.Width; col++ {
 			// If true send 1, else send 0
-			if req.Board[row][col] != previous[row][col] {
+			if req.Board[row][col] != c.previous[row][col] {
 				c.channels.events <- CellFlipped{
 					CompletedTurns: req.CompletedTurns,
 					Cell:           util.Cell{X: col, Y: row},
@@ -94,7 +86,7 @@ func (c *Controller) TurnComplete(req stubs.SaveBoardRequest, res *stubs.Empty) 
 	// Send a turn complete event
 	c.channels.events <- TurnComplete{req.CompletedTurns}
 	// Update the previous board to the new one
-	previous = req.Board
+	c.previous = req.Board
 	return
 }
 
@@ -134,10 +126,15 @@ func controller(p Params, c controllerChannels) {
 
 	// Load the image and store it in the board
 	boardFromFileInput(board, p.ImageHeight, p.ImageWidth, c.ioInput, c.events)
-	previous = board
 
 	// Create a RPC server for ourselves
-	controller := Controller{params: p, channels: c, state: stubs.Executing}
+	controller := Controller{
+		params:   p,
+		channels: c,
+		state:    stubs.Executing,
+		previous: board,
+		stopChan: make(chan bool),
+	}
 	controllerRPC := rpc.NewServer()
 	controllerRPC.Register(&controller)
 
@@ -179,7 +176,6 @@ func runGame(p Params, c controllerChannels, board [][]bool, controller Controll
 
 	try := 0
 	for try < 4 {
-
 		err = server.Call(stubs.ServerStartGame, stubs.StartGameRequest{
 			ControllerAddress: "localhost:" + p.Port,
 			Height:            p.ImageHeight,
@@ -187,6 +183,7 @@ func runGame(p Params, c controllerChannels, board [][]bool, controller Controll
 			MaxTurns:          p.Turns,
 			Threads:           p.Threads,
 			Board:             board,
+			VisualUpdates:     p.VisualUpdates,
 		}, response)
 
 		if err != nil {
@@ -211,7 +208,7 @@ func runGame(p Params, c controllerChannels, board [][]bool, controller Controll
 			if err != nil {
 				println("Error sending keypress to server:", err.Error())
 			}
-		case <-stopChan:
+		case <-controller.stopChan:
 			println("Closing connections")
 			server.Close()
 			listener.Close()

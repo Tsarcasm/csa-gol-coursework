@@ -11,6 +11,7 @@ type Params struct {
 	ServerAddress string
 	Port          string
 	OurIP         string
+	VisualUpdates bool
 }
 
 // Run starts the processing of Game of Life. It should initialise channels and goroutines.

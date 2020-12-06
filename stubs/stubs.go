@@ -66,10 +66,11 @@ type ServerResponse struct {
 type StartGameRequest struct {
 	ControllerAddress string
 
-	Height   int
-	Width    int
-	MaxTurns int
-	Threads  int
+	Height        int
+	Width         int
+	MaxTurns      int
+	Threads       int
+	VisualUpdates bool
 
 	Board [][]bool
 }

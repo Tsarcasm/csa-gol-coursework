@@ -50,6 +50,8 @@ func main() {
 		"port",
 		"8050",
 		"Specify our port. Defaults to 8050")
+
+	useSdl := flag.Bool("sdl", true, "Specify whether or not to use SDL")
 	flag.Parse()
 
 	fmt.Println("Threads:", params.Threads)
@@ -59,8 +61,15 @@ func main() {
 	fmt.Println("RPC Port:", params.Port)
 
 	keyPresses := make(chan rune, 10)
-	events := make(chan gol.Event, 1000)
-
+	events := make(chan gol.Event)
 	gol.Run(params, events, keyPresses)
-	sdl.Start(params, events, keyPresses)
+	// Only start SDL if we want to use it
+	if *useSdl {
+		sdl.Start(params, events, keyPresses)
+	} else {
+		// Otherwise consume all events until the channel is closed
+		for range events {
+		}
+
+	}
 }

@@ -119,12 +119,17 @@ func updateBoard(board [][]bool, newBoard [][]bool, height, width int) bool {
 	// Calculate the number of rows each worker thread should use
 	numWorkers := len(workers)
 	fragHeight := height / numWorkers
+	// The waitgroup will wait for all workers to finish
 	wg.Add(numWorkers)
-	for worker := 0; worker < numWorkers; worker++ {
-		// Update this fragment
-		halo := makeHalo(worker, fragHeight, numWorkers, height, width, board)
-		println("Sending ", len(halo.BitBoard.Bytes), " bytes")
-		go doWorker(halo, newBoard, workers[worker], &wg, &failFlag, failMu)
+
+	for w := 0; w < numWorkers; w++ {
+		thisWorker := workers[w]
+		go func(workerIdx int, worker *worker) {
+			// Get all the cells required to update this fragment
+			halo := makeHalo(workerIdx, fragHeight, numWorkers, height, width, board)
+			// Send the fragment to the worker
+			doWorker(halo, newBoard, worker, &wg, &failFlag, failMu)
+		}(w, thisWorker)
 	}
 
 	// We can release workers now

@@ -125,8 +125,8 @@ func connectToServer() bool {
 // Calculate the next turn, given pointers to the start and end to operate over
 // Return a fragment of the board with the next turn's cells
 func doTurn(halo stubs.Halo) (boardFragment stubs.Fragment) {
-	board := halo.BitBoard.ToSlice()
 	width := halo.BitBoard.RowLength
+	board := halo.BitBoard.Bytes.ToByteArray()
 	newBoard := make([][]bool, halo.EndPtr-halo.StartPtr)
 
 	// Iterate over each cell
@@ -135,7 +135,7 @@ func doTurn(halo stubs.Halo) (boardFragment stubs.Fragment) {
 		for col := 0; col < width; col++ {
 
 			// Calculate the next cell state
-			newCell := nextCellState(col, row+halo.Offset, board)
+			newCell := nextCellState(col, row+halo.Offset, board, halo.BitBoard.NumRows, halo.BitBoard.RowLength)
 
 			// Update the value of the new cell
 			newBoard[row][col] = newCell
@@ -145,7 +145,7 @@ func doTurn(halo stubs.Halo) (boardFragment stubs.Fragment) {
 	boardFragment = stubs.Fragment{
 		StartRow: halo.StartPtr,
 		EndRow:   halo.EndPtr,
-		BitBoard:    stubs.BitBoardFromSlice(newBoard, halo.EndPtr-halo.StartPtr, width),
+		BitBoard: stubs.BitBoardFromSlice(newBoard, halo.EndPtr-halo.StartPtr, width),
 	}
 
 	return boardFragment
@@ -154,16 +154,16 @@ func doTurn(halo stubs.Halo) (boardFragment stubs.Fragment) {
 
 // Calculate the next cell state according to Game Of Life rules
 // Returns a bool with the next state of the cell
-func nextCellState(x int, y int, board [][]bool) bool {
+func nextCellState(x int, y int, board []byte, bHeight, bWidth int) bool {
 	// Count the number of adjacent alive cells
-	adj := countAliveNeighbours(x, y, board)
+	adj := countAliveNeighbours(x, y, board, bHeight, bWidth)
 
 	// Default to dead
 	newState := false
 
 	// Find what will make the cell alive
 
-	if board[y][x] == true {
+	if stubs.GetByteArrayCell(board, bHeight, bWidth, y, x) == true {
 		if adj == 2 || adj == 3 {
 			// If only 2 or 3 neighbours then stay alive
 			newState = true
@@ -179,9 +179,7 @@ func nextCellState(x int, y int, board [][]bool) bool {
 
 // Count how many alive neighbours a cell has
 // This will correctly wrap around edges
-func countAliveNeighbours(x int, y int, board [][]bool) int {
-	height := len(board)
-	width := len(board[0])
+func countAliveNeighbours(x int, y int, board []byte, height, width int) int {
 	numNeighbours := 0
 
 	// Count all alive cells in the board in a
@@ -206,7 +204,7 @@ func countAliveNeighbours(x int, y int, board [][]bool) int {
 			}
 
 			// test if this cell is alive
-			v := board[wrapY][wrapX]
+			v := stubs.GetByteArrayCell(board, height, width, wrapY, wrapX)
 			if v == true {
 				numNeighbours++
 			}

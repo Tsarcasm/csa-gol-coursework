@@ -5,6 +5,7 @@ go 1.12
 require (
 	github.com/cheggaaa/pb/v3 v3.0.5
 	github.com/gernest/wow v0.1.0
+	github.com/go-delve/delve v1.5.0 // indirect
 	github.com/veandco/go-sdl2 v0.4.4
 	golang.org/x/crypto v0.0.0-20201124201722-c8d3bf9c5392 // indirect
 	golang.org/x/sys v0.0.0-20201130171929-760e229fe7c5 // indirect

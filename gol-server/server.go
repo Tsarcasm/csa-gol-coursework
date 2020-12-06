@@ -429,9 +429,10 @@ func (s *Server) Ping(req stubs.Empty, res *stubs.Empty) (err error) {
 func main() {
 	// Read in the network port we should listen on, from the commandline argument.
 	// Default to port 8030
-	portPtr := flag.String("port", "8020", "port to listen on")
+	portPtr := flag.String("p", "8020", "port to listen on")
 	flag.Parse()
 	println("Started server")
+	println("Our RPC port:", *portPtr)
 
 	// Register our RPC server
 	rpc.Register(&Server{})

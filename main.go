@@ -38,11 +38,25 @@ func main() {
 		10000000000,
 		"Specify the number of turns to process. Defaults to 10000000000.")
 
+	// Get the server address from the commandline
+	flag.StringVar(
+		&params.ServerAddress,
+		"server",
+		"localhost:8020",
+		"Specify the address of the server. Defaults to localhost:8020")
+	// Get our RPC port from the commandline
+	flag.StringVar(
+		&params.Port,
+		"port",
+		"8050",
+		"Specify our port. Defaults to 8050")
 	flag.Parse()
 
 	fmt.Println("Threads:", params.Threads)
 	fmt.Println("Width:", params.ImageWidth)
 	fmt.Println("Height:", params.ImageHeight)
+	fmt.Println("Server:", params.ServerAddress)
+	fmt.Println("RPC Port:", params.Port)
 
 	keyPresses := make(chan rune, 10)
 	events := make(chan gol.Event, 1000)

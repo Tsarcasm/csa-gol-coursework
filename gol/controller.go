@@ -142,7 +142,7 @@ func controller(p Params, c controllerChannels) {
 	controllerRPC.Register(&controller)
 
 	// Start a listener to accept incoming RPC calls
-	listener, err := net.Listen("tcp", "localhost:8031")
+	listener, err := net.Listen("tcp", "localhost:"+p.Port)
 	if err != nil {
 		println("Error starting listener:", err.Error())
 		return
@@ -170,7 +170,7 @@ func controller(p Params, c controllerChannels) {
 }
 
 func runGame(p Params, c controllerChannels, board [][]bool, controller Controller, listener net.Listener) {
-	server, err := rpc.Dial("tcp", "localhost:8020")
+	server, err := rpc.Dial("tcp", p.ServerAddress)
 	if err != nil {
 		println("Connection error:", err.Error())
 		return
@@ -181,7 +181,7 @@ func runGame(p Params, c controllerChannels, board [][]bool, controller Controll
 	for try < 4 {
 
 		err = server.Call(stubs.ServerStartGame, stubs.StartGameRequest{
-			ControllerAddress: "localhost:8031",
+			ControllerAddress: "localhost:" + p.Port,
 			Height:            p.ImageHeight,
 			Width:             p.ImageWidth,
 			MaxTurns:          p.Turns,
@@ -221,7 +221,6 @@ func runGame(p Params, c controllerChannels, board [][]bool, controller Controll
 }
 
 func saveBoard(board [][]bool, completedTurns int, p Params, c controllerChannels) {
-	return
 	c.ioCommand <- ioOutput
 	filename := strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight) + "x" + strconv.Itoa(completedTurns)
 	println("Saving to file", filename)

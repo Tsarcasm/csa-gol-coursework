@@ -1,6 +1,7 @@
 package gol
 
 import (
+	"fmt"
 	"net"
 	"net/rpc"
 	"time"
@@ -13,6 +14,8 @@ import (
 	"uk.ac.bris.cs/gameoflife/stubs"
 	"uk.ac.bris.cs/gameoflife/util"
 )
+
+//todo: comment this file
 
 // Channel Container structure
 type controllerChannels struct {
@@ -31,6 +34,10 @@ type Controller struct {
 	channels controllerChannels
 	state    stubs.State
 	previous [][]bool
+
+	lastAliveTurn int
+	lastAliveTime time.Time
+
 	stopChan chan bool
 }
 
@@ -57,12 +64,12 @@ func (c *Controller) FinalTurnComplete(req stubs.SaveBoardRequest, res *stubs.Em
 	// Send an event
 	c.channels.events <- FinalTurnComplete{
 		CompletedTurns: req.CompletedTurns,
-		Alive:          util.GetAliveCells(req.Board),
+		Alive:          util.GetAliveCells(req.Board.ToSlice()),
 	}
 
 	//todo re-enable board saving on last turn
 
-	go saveBoard(req.Board, req.CompletedTurns, c.params, c.channels)
+	go saveBoard(req.Board.ToSlice(), req.CompletedTurns, c.params, c.channels)
 	// defer func() { c.stopChan <- true }()
 	c.stopChan <- true
 	return
@@ -72,10 +79,11 @@ func (c *Controller) FinalTurnComplete(req stubs.SaveBoardRequest, res *stubs.Em
 // It contains a copy of the board on this turn so we can display it
 func (c *Controller) TurnComplete(req stubs.SaveBoardRequest, res *stubs.Empty) (err error) {
 	// If any cells have changed then send a cellflipped event
-	for row := 0; row < req.Height; row++ {
-		for col := 0; col < req.Width; col++ {
+	board := req.Board.ToSlice()
+	for row := 0; row < req.Board.NumRows; row++ {
+		for col := 0; col < req.Board.RowLength; col++ {
 			// If true send 1, else send 0
-			if req.Board[row][col] != c.previous[row][col] {
+			if board[row][col] != c.previous[row][col] {
 				c.channels.events <- CellFlipped{
 					CompletedTurns: req.CompletedTurns,
 					Cell:           util.Cell{X: col, Y: row},
@@ -86,7 +94,7 @@ func (c *Controller) TurnComplete(req stubs.SaveBoardRequest, res *stubs.Empty) 
 	// Send a turn complete event
 	c.channels.events <- TurnComplete{req.CompletedTurns}
 	// Update the previous board to the new one
-	c.previous = req.Board
+	c.previous = board
 	return
 }
 
@@ -94,7 +102,7 @@ func (c *Controller) TurnComplete(req stubs.SaveBoardRequest, res *stubs.Empty) 
 func (c *Controller) SaveBoard(req stubs.SaveBoardRequest, res *stubs.Empty) (err error) {
 	println("Received save board request")
 	// Save the board
-	go saveBoard(req.Board, req.CompletedTurns, c.params, c.channels)
+	go saveBoard(req.Board.ToSlice(), req.CompletedTurns, c.params, c.channels)
 	return
 }
 
@@ -103,6 +111,15 @@ func (c *Controller) SaveBoard(req stubs.SaveBoardRequest, res *stubs.Empty) (er
 func (c *Controller) ReportAliveCells(req stubs.AliveCellsReport, res *stubs.Empty) (err error) {
 	println("Received alive cells report")
 	println("Turn:", req.CompletedTurns, ",", req.NumAlive)
+	now := time.Now()
+	turnsDiff := req.CompletedTurns - c.lastAliveTurn
+	timeDiff := now.Sub(c.lastAliveTime)
+	fmt.Printf("%.2f", float64(turnsDiff)/timeDiff.Seconds())
+	println(" turns/s")
+
+	c.lastAliveTime = now
+	c.lastAliveTurn = req.CompletedTurns
+
 	// Send an event
 	c.channels.events <- AliveCellsCount{CompletedTurns: req.CompletedTurns, CellsCount: req.NumAlive}
 	return
@@ -133,6 +150,10 @@ func controller(p Params, c controllerChannels) {
 		channels: c,
 		state:    stubs.Executing,
 		previous: board,
+
+		lastAliveTurn: 0,
+		lastAliveTime: time.Now(),
+
 		stopChan: make(chan bool),
 	}
 	controllerRPC := rpc.NewServer()
@@ -182,7 +203,7 @@ func runGame(p Params, c controllerChannels, board [][]bool, controller Controll
 			Width:             p.ImageWidth,
 			MaxTurns:          p.Turns,
 			Threads:           p.Threads,
-			Board:             board,
+			Board:             stubs.BitBoardFromSlice(board, p.ImageHeight, p.ImageWidth),
 			VisualUpdates:     p.VisualUpdates,
 		}, response)
 

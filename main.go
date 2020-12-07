@@ -68,12 +68,12 @@ func main() {
 	gol.Run(params, events, keyPresses)
 
 	// Only start SDL if we want to use it
-	if params.VisualUpdates {
-		sdl.Start(params, events, keyPresses)
-	} else {
-		// Otherwise consume all events until the channel is closed
-		for range events {
-		}
+	sdl.Start(params, events, keyPresses)
+	// if params.VisualUpdates {
+	// } else {
+	// 	// Otherwise consume all events until the channel is closed
+	// 	for range events {
+	// 	}
 
-	}
+	// }
 }

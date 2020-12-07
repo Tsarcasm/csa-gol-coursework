@@ -72,7 +72,7 @@ type StartGameRequest struct {
 	Threads       int
 	VisualUpdates bool
 
-	Board [][]bool
+	Board *BitBoard
 }
 
 // KeypressRequest is used to send a keypress from a controller to be handled at the server
@@ -102,9 +102,7 @@ type TurnCompleteReport struct {
 type SaveBoardRequest struct {
 	CompletedTurns int
 
-	Height int
-	Width  int
-	Board  [][]bool
+	Board *BitBoard
 }
 
 // AliveCellsReport is passed to the controller every 2 seconds to tell them how many

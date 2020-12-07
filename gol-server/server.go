@@ -206,7 +206,7 @@ func controllerLoop(board [][]bool, height, width, maxTurns, threads int, visual
 				println("Telling controller to save board")
 				// Send the board to the controller to save
 				controller.Call(stubs.ControllerSaveBoard,
-					stubs.SaveBoardRequest{CompletedTurns: maxTurns, Height: height, Width: width, Board: board}, &stubs.Empty{})
+					stubs.SaveBoardRequest{CompletedTurns: maxTurns, Board: stubs.BitBoardFromSlice(board, height, width)}, &stubs.Empty{})
 			case 'k':
 				println("Controller wants to close everything")
 
@@ -220,9 +220,7 @@ func controllerLoop(board [][]bool, height, width, maxTurns, threads int, visual
 				controller.Call(stubs.ControllerFinalTurnComplete,
 					stubs.SaveBoardRequest{
 						CompletedTurns: turn,
-						Height:         height,
-						Width:          width,
-						Board:          board,
+						Board:          stubs.BitBoardFromSlice(board, height, width),
 					},
 					&stubs.Empty{})
 
@@ -257,11 +255,11 @@ func controllerLoop(board [][]bool, height, width, maxTurns, threads int, visual
 					copy(board[row], newBoard[row])
 				}
 				if visualUpdates {
-					println("Sending turn complete")
+					// println("Sending turn complete")
 					// Tell the controller we have completed a turn
 					// Do this concurrently since we don't need to wait for the controller
 					controller.Call(stubs.ControllerTurnComplete,
-						stubs.SaveBoardRequest{CompletedTurns: maxTurns, Height: height, Width: width, Board: board}, &stubs.Empty{})
+						stubs.SaveBoardRequest{CompletedTurns: turn, Board: stubs.BitBoardFromSlice(board, height, width)}, &stubs.Empty{})
 				}
 				turn++
 			} else {
@@ -279,9 +277,7 @@ func controllerLoop(board [][]bool, height, width, maxTurns, threads int, visual
 	err := controller.Call(stubs.ControllerFinalTurnComplete,
 		stubs.SaveBoardRequest{
 			CompletedTurns: maxTurns,
-			Height:         height,
-			Width:          width,
-			Board:          board,
+			Board:          stubs.BitBoardFromSlice(board, height, width),
 		},
 		&stubs.Empty{})
 	if err != nil {
@@ -368,7 +364,7 @@ func (s *Server) StartGame(req stubs.StartGameRequest, res *stubs.ServerResponse
 	res.Message = "Connected!"
 
 	// Run the controller loop goroutine
-	go controllerLoop(req.Board, req.Height, req.Width, req.MaxTurns, req.Threads, req.VisualUpdates)
+	go controllerLoop(req.Board.ToSlice(), req.Height, req.Width, req.MaxTurns, req.Threads, req.VisualUpdates)
 	return
 }
 

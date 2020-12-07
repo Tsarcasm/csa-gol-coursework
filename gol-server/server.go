@@ -497,7 +497,7 @@ func main() {
 	rpc.Register(&Server{})
 
 	// Create a listener to handle rpc requests
-	ln, _ := net.Listen("tcp", "localhost:"+*portPtr)
+	ln, _ := net.Listen("tcp", ":"+*portPtr)
 	listener = ln
 
 	// This will block until the listener is closed

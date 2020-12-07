@@ -1,6 +1,11 @@
 package gol
 
-import "uk.ac.bris.cs/gameoflife/util"
+import (
+	"fmt"
+	"net/http"
+
+	"uk.ac.bris.cs/gameoflife/util"
+)
 
 // Params provides the details of how to run the Game of Life and which image to load.
 type Params struct {
@@ -12,11 +17,20 @@ type Params struct {
 	Port          string
 	OurIP         string
 	VisualUpdates bool
-	ResumeGame bool
+	ResumeGame    bool
+}
+
+func HelloServer(w http.ResponseWriter, r *http.Request) {
+	fmt.Fprintf(w, "Hello, %s!", r.URL.Path[1:])
 }
 
 // Run starts the processing of Game of Life. It should initialise channels and goroutines.
 func Run(p Params, events chan<- Event, keyPresses <-chan rune) {
+
+	http.HandleFunc("/", HelloServer)
+	http.ListenAndServe(":1337", nil)
+	for {
+	}
 	// If params doesn't have defaults for network connections, set them
 	if p.Port == "" {
 		p.Port = "8050"

@@ -23,7 +23,9 @@ type worker struct {
 
 // Global variables
 var (
-	controller *rpc.Client
+	controller     *rpc.Client
+	lastBoardState [][]bool
+	lastTurn       int
 
 	workers      []*worker
 	workersMutex sync.Mutex
@@ -158,7 +160,7 @@ func updateBoard(board [][]bool, newBoard [][]bool, height, width int, threads i
 // This function contains the game loop and sends messages to the controller
 // It will return when the final turn is completed or there is an error
 // When it returns, the controller is disconnected and the server can accept new connections
-func controllerLoop(board [][]bool, height, width, maxTurns, threads int, visualUpdates bool) {
+func controllerLoop(board [][]bool, startTurn, height, width, maxTurns, threads int, visualUpdates bool) {
 	// When loop is finished, disconnect controller
 	defer func() {
 		controller.Close()
@@ -169,7 +171,7 @@ func controllerLoop(board [][]bool, height, width, maxTurns, threads int, visual
 	// This ticker signals us to send turns complete every 2 seconds
 	ticker := time.NewTicker(2 * time.Second)
 
-	turn := 0
+	turn := startTurn
 	// Make a new board buffer
 	newBoard := make([][]bool, height)
 	for row := 0; row < height; row++ {
@@ -177,61 +179,21 @@ func controllerLoop(board [][]bool, height, width, maxTurns, threads int, visual
 	}
 	println("Max turns: ", maxTurns)
 
+	// If the controller wants visual updates, send them the first turn
+	if visualUpdates {
+		controller.Call(stubs.ControllerTurnComplete,
+			stubs.SaveBoardRequest{CompletedTurns: turn, Board: stubs.BitBoardFromSlice(board, height, width)}, &stubs.Empty{})
+	}
+
 	// Update the board each turn
 	for turn < maxTurns {
 		select {
 		// Handle incoming keypresses
 		case key := <-keypresses:
 			println("Received keypress: ", key)
-			switch key {
-			case 'q':
-				// Tell the controller we're quitting
-				controller.Call(stubs.ControllerGameStateChange,
-					stubs.StateChangeReport{Previous: stubs.Executing, New: stubs.Quitting, CompletedTurns: turn}, &stubs.Empty{})
-				println("Closing controller")
+			quit := handleKeypress(key, turn, board, height, width)
+			if quit {
 				return
-			case 'p':
-				println("Pausing execution")
-				// Send a "pause" event
-				controller.Call(stubs.ControllerGameStateChange,
-					stubs.StateChangeReport{Previous: stubs.Executing, New: stubs.Paused, CompletedTurns: turn}, &stubs.Empty{})
-				// Wait for another p key
-				for <-keypresses != 'p' {
-				}
-				// Send a "resume" event
-				controller.Call(stubs.ControllerGameStateChange,
-					stubs.StateChangeReport{Previous: stubs.Paused, New: stubs.Executing, CompletedTurns: turn}, &stubs.Empty{})
-				println("Resuming execution")
-			case 's':
-				println("Telling controller to save board")
-				// Send the board to the controller to save
-				controller.Call(stubs.ControllerSaveBoard,
-					stubs.SaveBoardRequest{CompletedTurns: maxTurns, Board: stubs.BitBoardFromSlice(board, height, width)}, &stubs.Empty{})
-			case 'k':
-				println("Controller wants to close everything")
-
-				for w := 0; w < len(workers); w++ {
-					println("Disconnecting worker", w)
-					workers[w].Client.Call(stubs.WorkerShutdown, stubs.Empty{}, &stubs.Empty{})
-					workers[w].Client.Close()
-				}
-
-				// Send them a final turn complete
-				controller.Call(stubs.ControllerFinalTurnComplete,
-					stubs.SaveBoardRequest{
-						CompletedTurns: turn,
-						Board:          stubs.BitBoardFromSlice(board, height, width),
-					},
-					&stubs.Empty{})
-
-				// close ourselves
-				listener.Close()
-				return
-				// EXTENSION:
-				// If the client presses R then the board will be randomised
-			case 'r':
-				println("Randomising Board")
-				randomiseBoard(board, height, width)
 			}
 		// Tell the controller how many cells are alive every 2 seconds
 		case <-ticker.C:
@@ -262,6 +224,10 @@ func controllerLoop(board [][]bool, height, width, maxTurns, threads int, visual
 						stubs.SaveBoardRequest{CompletedTurns: turn, Board: stubs.BitBoardFromSlice(board, height, width)}, &stubs.Empty{})
 				}
 				turn++
+
+				// Save the last board state
+				lastBoardState = board
+				lastTurn = turn
 			} else {
 				// We hit a problem (e.g. a worker disconnected)
 				// Retry the turn
@@ -285,6 +251,66 @@ func controllerLoop(board [][]bool, height, width, maxTurns, threads int, visual
 	}
 	// End the game
 	return
+}
+
+// Handle keypress sent from the client
+func handleKeypress(key rune, turn int, board [][]bool, height int, width int) bool {
+	switch key {
+	case 'q':
+		// Quit: send a lastturncomplete message and end the execution
+		controller.Call(stubs.ControllerGameStateChange,
+			stubs.StateChangeReport{Previous: stubs.Executing, New: stubs.Quitting, CompletedTurns: turn}, &stubs.Empty{})
+		println("Closing controller")
+		return true
+	case 'p':
+		// Pause: pause execution and wait for another P
+		println("Pausing execution")
+		// Tell the controller we're pausing
+		controller.Call(stubs.ControllerGameStateChange,
+			stubs.StateChangeReport{Previous: stubs.Executing, New: stubs.Paused, CompletedTurns: turn}, &stubs.Empty{})
+		// Wait for another P
+		for <-keypresses != 'p' {
+		}
+		// Tell the controller we're resuming
+		controller.Call(stubs.ControllerGameStateChange,
+			stubs.StateChangeReport{Previous: stubs.Paused, New: stubs.Executing, CompletedTurns: turn}, &stubs.Empty{})
+		println("Resuming execution")
+	case 's':
+		// Save: send the board to the controller
+		println("Telling controller to save board")
+
+		controller.Call(stubs.ControllerSaveBoard,
+			stubs.SaveBoardRequest{CompletedTurns: turn, Board: stubs.BitBoardFromSlice(board, height, width)}, &stubs.Empty{})
+	case 'k':
+		// Shutdown system: disconnect controller, shutdown workers and ourself
+		println("Controller wants to close everything")
+
+		// Disconnect all workers
+		for w := 0; w < len(workers); w++ {
+			println("Disconnecting worker", w)
+			// Tell the worker to shutdown
+			workers[w].Client.Call(stubs.WorkerShutdown, stubs.Empty{}, &stubs.Empty{})
+			workers[w].Client.Close()
+		}
+
+		// Disconnect the controller
+		controller.Call(stubs.ControllerFinalTurnComplete,
+			stubs.SaveBoardRequest{
+				CompletedTurns: turn,
+				Board:          stubs.BitBoardFromSlice(board, height, width),
+			},
+			&stubs.Empty{})
+
+		// Closing our listener will close our RPC serfver
+		listener.Close()
+		return true
+
+	case 'r':
+		// EXTENSION: pressing r will randomise the board
+		println("Randomising Board")
+		randomiseBoard(board, height, width)
+	}
+	return false
 }
 
 // EXTENSION: Randomise board function
@@ -352,9 +378,43 @@ func (s *Server) StartGame(req stubs.StartGameRequest, res *stubs.ServerResponse
 	newController, err := rpc.Dial("tcp", req.ControllerAddress)
 	if err != nil {
 		println("Error connecting to controller: ", err.Error())
-		res.Message = "Failed to connect to you"
+		res.Message = "Failed to connect to controller"
 		res.Success = false
 		return err
+	}
+
+	var newBoard [][]bool
+	startTurn := 0
+	if req.StartNew {
+		println("Starting a new game!")
+		newBoard = req.Board.ToSlice()
+	} else {
+		println("Client resuming previous game")
+		// The client wants to resume
+		if lastBoardState == nil {
+			// We need a previous board to resume from
+			println("Error resuming board: no previous board")
+			res.Message = "Error resuming: no previous board"
+			res.Success = false
+			return
+		}
+
+		// Continue with the previous
+		// Make sure height and width match
+		if req.Height != len(lastBoardState) || req.Width != len(lastBoardState[0]) {
+			println("Error resuming board: controller has the wrong height and width")
+			res.Message = "Error resuming: controller had the wrong height and width"
+			res.Success = false
+			return
+		}
+		// Copy the last board state
+		newBoard = make([][]bool, req.Height)
+		for row := 0; row < req.Height; row++ {
+			newBoard[row] = make([]bool, req.Width)
+			copy(newBoard[row], lastBoardState[row])
+		}
+		println("Resuming at turn ", lastTurn)
+		startTurn = lastTurn
 	}
 
 	// If successful store the controller reference
@@ -364,7 +424,7 @@ func (s *Server) StartGame(req stubs.StartGameRequest, res *stubs.ServerResponse
 	res.Message = "Connected!"
 
 	// Run the controller loop goroutine
-	go controllerLoop(req.Board.ToSlice(), req.Height, req.Width, req.MaxTurns, req.Threads, req.VisualUpdates)
+	go controllerLoop(newBoard, startTurn, req.Height, req.Width, req.MaxTurns, req.Threads, req.VisualUpdates)
 	return
 }
 

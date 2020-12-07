@@ -12,6 +12,7 @@ type Params struct {
 	Port          string
 	OurIP         string
 	VisualUpdates bool
+	ResumeGame bool
 }
 
 // Run starts the processing of Game of Life. It should initialise channels and goroutines.

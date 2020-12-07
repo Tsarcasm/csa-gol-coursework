@@ -127,7 +127,6 @@ func (c *Controller) ReportAliveCells(req stubs.AliveCellsReport, res *stubs.Emp
 
 // distributor divides the work between workers and interacts with other goroutines.
 func controller(p Params, c controllerChannels) {
-	println("Starting new game")
 	// Create a new board to store 0th turn
 	board := make([][]bool, p.ImageHeight)
 	// Make a column array for each row
@@ -135,14 +134,22 @@ func controller(p Params, c controllerChannels) {
 		board[row] = make([]bool, p.ImageWidth)
 	}
 
-	// Prepare IO for reading
-	c.ioCommand <- ioInput
-	filename := strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight)
-	c.ioFilename <- filename
-	println("Reading in file", filename)
+	if p.ResumeGame {
+		// If we want to resume a game, no need to load the board
+		println("Resuming game from the server")
+	} else {
+		// Else if we are starting a new game, load the board from a file
+		println("Starting new game")
 
-	// Load the image and store it in the board
-	boardFromFileInput(board, p.ImageHeight, p.ImageWidth, c.ioInput, c.events)
+		// Prepare IO for reading
+		c.ioCommand <- ioInput
+		filename := strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight)
+		c.ioFilename <- filename
+		println("Reading in file", filename)
+
+		// Load the image and store it in the board
+		boardFromFileInput(board, p.ImageHeight, p.ImageWidth, c.ioInput, c.events)
+	}
 
 	// Create a RPC server for ourselves
 	controller := Controller{
@@ -181,12 +188,14 @@ func controller(p Params, c controllerChannels) {
 	c.ioCommand <- ioCheckIdle
 	<-c.ioIdle
 
-	c.events <- StateChange{p.Turns, stubs.Quitting}
+	// c.events <- StateChange{p.Turns, stubs.Quitting}
 
 	// Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
 	defer close(c.events)
 }
 
+// RunGame is responsible for connecting to the server and handling channels from the server
+// It will attempt to establish a connection, if this is successful it will then call ServerStartGame
 func runGame(p Params, c controllerChannels, board [][]bool, controller Controller, listener net.Listener) {
 	server, err := rpc.Dial("tcp", p.ServerAddress)
 	if err != nil {
@@ -205,6 +214,7 @@ func runGame(p Params, c controllerChannels, board [][]bool, controller Controll
 			Threads:           p.Threads,
 			Board:             stubs.BitBoardFromSlice(board, p.ImageHeight, p.ImageWidth),
 			VisualUpdates:     p.VisualUpdates,
+			StartNew:          !p.ResumeGame,
 		}, response)
 
 		if err != nil {
@@ -215,7 +225,7 @@ func runGame(p Params, c controllerChannels, board [][]bool, controller Controll
 			if try == 3 {
 				return
 			}
-			time.Sleep(200 * time.Millisecond)
+			time.Sleep(500 * time.Millisecond)
 			try++
 			continue
 		}

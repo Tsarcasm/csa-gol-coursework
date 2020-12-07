@@ -55,6 +55,11 @@ func main() {
 		"sdl",
 		true,
 		"Specify whether or not to use SDL")
+
+	flag.BoolVar(&params.ResumeGame,
+		"resume",
+		false,
+		"Specify whether or not to resume the server's game")
 	flag.Parse()
 
 	fmt.Println("Threads:", params.Threads)

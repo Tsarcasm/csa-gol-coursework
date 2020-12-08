@@ -21,26 +21,27 @@ type Params struct {
 }
 
 func HelloServer(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, "Hello, %s!", r.URL.Path[1:])
+	fmt.Fprintf(w, "Hello, test")
 }
 
 // Run starts the processing of Game of Life. It should initialise channels and goroutines.
 func Run(p Params, events chan<- Event, keyPresses <-chan rune) {
+	// Get our public IP address
+	p.OurIP = util.GetPublicIP()
 
-	http.HandleFunc("/", HelloServer)
-	http.ListenAndServe(":1337", nil)
-	for {
-	}
+	println(p.OurIP)
+	// http.HandleFunc("/", HelloServer)
+	// err := http.ListenAndServe(":8030", nil)
+	// println(err.Error())
+	// for {
+	// }
 	// If params doesn't have defaults for network connections, set them
 	if p.Port == "" {
 		p.Port = "8050"
 	}
 	if p.ServerAddress == "" {
-		p.ServerAddress = "localhost:8020"
+		p.ServerAddress = "54.156.128.45:8030"
 	}
-
-	// Get our public IP address
-	p.OurIP = util.GetPublicIP()
 
 	ioCommand := make(chan ioCommand)
 	ioIdle := make(chan bool)

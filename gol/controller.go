@@ -29,6 +29,7 @@ type controllerChannels struct {
 }
 
 // Controller structure for the client RPC
+// Contains variables specific to the game the controller is running
 type Controller struct {
 	params   Params
 	channels controllerChannels
@@ -37,7 +38,7 @@ type Controller struct {
 
 	lastAliveTurn int
 	lastAliveTime time.Time
-
+	// A value is sent down this channel when it is time to close the controller
 	stopChan chan bool
 }
 
@@ -83,7 +84,16 @@ func (c *Controller) TurnComplete(req stubs.SaveBoardRequest, res *stubs.Empty) 
 	for row := 0; row < req.Board.NumRows; row++ {
 		for col := 0; col < req.Board.RowLength; col++ {
 			// If true send 1, else send 0
-			if board[row][col] != c.previous[row][col] {
+			// If we have no previous board, send the 0th turn events
+			if c.previous == nil {
+				if board[row][col] == true {
+					c.channels.events <- CellFlipped{
+						CompletedTurns: req.CompletedTurns,
+						Cell:           util.Cell{X: col, Y: row},
+					}
+				}
+			} else if board[row][col] != c.previous[row][col] {
+				// Otherwise, only send flipped events if there is a cell change
 				c.channels.events <- CellFlipped{
 					CompletedTurns: req.CompletedTurns,
 					Cell:           util.Cell{X: col, Y: row},
@@ -125,7 +135,9 @@ func (c *Controller) ReportAliveCells(req stubs.AliveCellsReport, res *stubs.Emp
 	return
 }
 
-// distributor divides the work between workers and interacts with other goroutines.
+// The controller function sets up the controller to connect to the server
+// It will also start an RPC server and only returns when this is closed
+// When this function ends, it will cleanly close the events channel, signaling the program to halt
 func controller(p Params, c controllerChannels) {
 	// Create a new board to store 0th turn
 	board := make([][]bool, p.ImageHeight)
@@ -142,13 +154,7 @@ func controller(p Params, c controllerChannels) {
 		println("Starting new game")
 
 		// Prepare IO for reading
-		c.ioCommand <- ioInput
-		filename := strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight)
-		c.ioFilename <- filename
-		println("Reading in file", filename)
-
-		// Load the image and store it in the board
-		boardFromFileInput(board, p.ImageHeight, p.ImageWidth, c.ioInput, c.events)
+		loadBoard(c, p, board)
 	}
 
 	// Create a RPC server for ourselves
@@ -156,7 +162,7 @@ func controller(p Params, c controllerChannels) {
 		params:   p,
 		channels: c,
 		state:    stubs.Executing,
-		previous: board,
+		previous: nil,
 
 		lastAliveTurn: 0,
 		lastAliveTime: time.Now(),
@@ -197,15 +203,33 @@ func controller(p Params, c controllerChannels) {
 // RunGame is responsible for connecting to the server and handling channels from the server
 // It will attempt to establish a connection, if this is successful it will then call ServerStartGame
 func runGame(p Params, c controllerChannels, board [][]bool, controller Controller, listener net.Listener) {
+	// When this function returns, close the listener
+	defer listener.Close()
+	// Attempt to connect to the server
 	server, err := rpc.Dial("tcp", p.ServerAddress)
+	defer server.Close()
+
 	if err != nil {
+		// If we can't connect to the server then bail
 		println("Connection error:", err.Error())
 		return
 	}
+
+	println("Established connection with the server: ", p.ServerAddress)
+	// This contains the response of the StartGame RPC call
 	response := new(stubs.ServerResponse)
 
+	// Attempt to start a game with the server
+	// We allow for 4 retries incase the server is slow at closing a previous connection
 	try := 0
-	for try < 4 {
+	for ; ; try++ {
+		if try == 4 {
+			println("Exhausted attempts to start a game, exiting")
+			return
+		}
+
+		// Ask the server to start a game
+		// Pass all the information required to start (or continue) a game
 		err = server.Call(stubs.ServerStartGame, stubs.StartGameRequest{
 			ControllerAddress: p.OurIP + ":" + p.Port,
 			Height:            p.ImageHeight,
@@ -217,47 +241,73 @@ func runGame(p Params, c controllerChannels, board [][]bool, controller Controll
 			StartNew:          !p.ResumeGame,
 		}, response)
 
+		// No errors, we can start responding to channels
+		if err == nil && response.Success {
+			println("Game starting!")
+			break
+		}
+
+		// Print any errors
 		if err != nil {
 			println("Connection error:", err.Error())
-			return
 		} else if response.Success == false {
 			println("Server error:", response.Message)
-			if try == 3 {
-				return
-			}
-			time.Sleep(500 * time.Millisecond)
-			try++
-			continue
 		}
-		break
+		// Delay 0.5 seconds incase the server is still busy
+		time.Sleep(500 * time.Millisecond)
 	}
 
+	// Handle all keypresses and channel inputs until the game stops
 	for {
 		select {
 		case key := <-c.keypresses:
+			// Send any keypresses we receive from SDL to the server
 			err = server.Call(stubs.ServerRegisterKeypress, stubs.KeypressRequest{Key: key}, response)
 			if err != nil {
 				println("Error sending keypress to server:", err.Error())
 			}
 		case <-controller.stopChan:
-			println("Closing connections")
-			server.Close()
-			listener.Close()
+			// If we receive a stop signal then exit the game loop
+			println("Received stop signal")
+			println("Closing RPC server")
 			return
 		}
 	}
 
 }
 
+// Load a board slice from a file
+// This will properly prepare all the channels for reading
+func loadBoard(c controllerChannels, p Params, board [][]bool) {
+	filename := strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight)
+	println("Reading in file", filename)
+
+	// Set the IO channels to prepare for reading
+	c.ioCommand <- ioInput
+	c.ioFilename <- filename
+
+	// Read the board from the io goroutine in bytes
+	boardFromFileInput(board, p.ImageHeight, p.ImageWidth, c.ioInput, c.events)
+}
+
+// Save a board slice to the file
+// This will properly prepare all the channels for writing
 func saveBoard(board [][]bool, completedTurns int, p Params, c controllerChannels) {
-	c.ioCommand <- ioOutput
 	filename := strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight) + "x" + strconv.Itoa(completedTurns)
 	println("Saving to file", filename)
+
+	// Set the IO channels to prepare for writing
+	c.ioCommand <- ioOutput
 	c.ioFilename <- filename
+
+	// Send the board to the io goroutine in bytes
 	boardToFileOutput(board, p.ImageHeight, p.ImageWidth, c.ioOutput)
 }
 
-//Populate a board from a file input channel, sending events on cells set to alive
+// Populate a board from a file input channel, sending events on cells set to alive
+// Before this is run, two channels must be set:
+// ioCommand <- input
+// ioFilename <- "name"
 func boardFromFileInput(board [][]bool, height, width int, fileInput <-chan uint8, events chan<- Event) {
 	for row := 0; row < height; row++ {
 		for col := 0; col < width; col++ {
@@ -267,15 +317,15 @@ func boardFromFileInput(board [][]bool, height, width int, fileInput <-chan uint
 				board[row][col] = false
 			} else {
 				board[row][col] = true
-				events <- CellFlipped{
-					CompletedTurns: 0,
-					Cell:           util.Cell{X: col, Y: row},
-				}
 			}
 		}
 	}
 }
 
+// Save a file with the contents of a board
+// Before this is run, two channels must be set:
+// ioCommand <- input
+// ioFilename <- "name"
 func boardToFileOutput(board [][]bool, height, width int, fileOutput chan<- uint8) {
 	for row := 0; row < height; row++ {
 		for col := 0; col < width; col++ {

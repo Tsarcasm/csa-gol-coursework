@@ -9,7 +9,7 @@ import (
 
 func BenchmarkGol(b *testing.B) {
 	// os.Stdout = nil // Disable all program output apart from benchmark results
-	println("Test ", b.N)
+	// fmt.Println("Test ", b.N)
 	benchmarkGol(b)
 }
 
@@ -34,7 +34,7 @@ func benchmarkGol(b *testing.B) {
 		ImageWidth:  512,
 		ImageHeight: 512,
 		Turns:       1000,
-		Threads:     32}
+		Threads:     8}
 	events := make(chan gol.Event)
 
 	gol.Run(params, events, nil)

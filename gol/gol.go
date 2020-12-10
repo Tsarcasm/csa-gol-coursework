@@ -27,8 +27,9 @@ func HelloServer(w http.ResponseWriter, r *http.Request) {
 // Run starts the processing of Game of Life. It should initialise channels and goroutines.
 func Run(p Params, events chan<- Event, keyPresses <-chan rune) {
 	// Get our public IP address
-	p.OurIP = util.GetPublicIP()
-
+	if p.OurIP == "" {
+		p.OurIP = util.GetPublicIP()
+	}
 	println(p.OurIP)
 	// http.HandleFunc("/", HelloServer)
 	// err := http.ListenAndServe(":8030", nil)

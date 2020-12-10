@@ -64,10 +64,14 @@ func randomiseBoard(board [][]bool, height, width int) {
 
 func benchmarkGol(b *testing.B) {
 	params := gol.Params{
-		ImageWidth:  512,
-		ImageHeight: 512,
-		Turns:       1000,
-		Threads:     4}
+		ImageWidth:    512,
+		ImageHeight:   512,
+		Turns:         1000,
+		Threads:       2,
+		ServerAddress: "54.156.128.45:8030",
+		VisualUpdates: false,
+		OurIP:         "185.164.183.135",
+	}
 	events := make(chan gol.Event)
 
 	gol.Run(params, events, nil)

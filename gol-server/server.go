@@ -254,7 +254,7 @@ func controllerLoop(board [][]bool, startTurn, height, width, maxTurns, threads 
 }
 
 // Handle keypress sent from the client
-func handleKeypress(key rune, turn int, board [][]bool, height int, width int) bool {
+func handleKeypress(key rune, turn int, board [][]bool, height, width int) bool {
 	switch key {
 	case 'q':
 		// Quit: send a lastturncomplete message and end the execution

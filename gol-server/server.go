@@ -41,7 +41,7 @@ func init() {
 
 // Send a portion of the board to a worker to process the turn for
 // Copy the result into the correct place in the new board
-func doWorker(halo stubs.Halo, newBoard [][]bool, threads int, worker *worker, wg *sync.WaitGroup, failFlag *bool, failMu *sync.Mutex) {
+func doWorker(halo stubs.Halo, newBoard [][]bool, threads int, worker *worker, wg *sync.WaitGroup, failChan chan<- bool, fragChan chan<- stubs.Fragment) {
 	defer wg.Done()
 
 	// Spawn a new worker thread
@@ -54,18 +54,12 @@ func doWorker(halo stubs.Halo, newBoard [][]bool, threads int, worker *worker, w
 		println("Error getting fragment:", err.Error())
 		// If we encounter an error then set the fail flag to true
 		// Lock the mutex here to get exclusive access
-		failMu.Lock()
-		*failFlag = true
-		failMu.Unlock()
 		// Disconnect the worker
 		disconnectWorker(worker)
+		failChan <- true
 		return
 	}
-	// Copy the fragment back into the board
-	respCells := response.Frag.BitBoard.ToSlice()
-	for row := response.Frag.StartRow; row < response.Frag.EndRow; row++ {
-		copy(newBoard[row], respCells[row-response.Frag.StartRow])
-	}
+	fragChan <- response.Frag
 }
 
 // Create a "halo" of cells containing only the cells required to calculat the next turn
@@ -122,9 +116,7 @@ func updateBoard(board [][]bool, newBoard [][]bool, height, width int, threads i
 	// EXTENSION: Worker goroutines will flag if a worker fails to communicate
 	// We can then disconnect the worker and retry the turn
 	// Assume we start with no fails
-	failFlag := false
-	failMu := &sync.Mutex{}
-
+	failChan := make(chan bool)
 	// Lock workers so no new workers can be added / removed until all goroutines are started
 	workersMutex.Lock()
 
@@ -133,6 +125,7 @@ func updateBoard(board [][]bool, newBoard [][]bool, height, width int, threads i
 	fragHeight := height / numWorkers
 	// The waitgroup will wait for all workers to finish
 	wg.Add(numWorkers)
+	fragChan := make(chan stubs.Fragment, numWorkers)
 
 	for w := 0; w < numWorkers; w++ {
 		thisWorker := workers[w]
@@ -140,20 +133,38 @@ func updateBoard(board [][]bool, newBoard [][]bool, height, width int, threads i
 			// Get all the cells required to update this fragment
 			halo := makeHalo(workerIdx, fragHeight, numWorkers, height, width, board)
 			// Send the fragment to the worker
-			doWorker(halo, newBoard, threads, worker, &wg, &failFlag, failMu)
+			doWorker(halo, newBoard, threads, worker, &wg, failChan, fragChan)
 		}(w, thisWorker)
 	}
 
 	// We can release workers now
 	workersMutex.Unlock()
+
+	i := 0
+	fail := false
+	for i < numWorkers {
+		select {
+		case fail = <-failChan:
+			break
+		case frag := <-fragChan:
+			// Copy the fragment back into the board
+			respCells := frag.BitBoard.ToSlice()
+			for row := frag.StartRow; row < frag.EndRow; row++ {
+				copy(newBoard[row], respCells[row-frag.StartRow])
+			}
+			i++
+		}
+	}
+
 	// Wait for all workers to finish
 	wg.Wait()
 
 	// Check that there have been no fails
-	if failFlag {
+	if fail {
 		// One or more of the workers have hit a problem
 		return false
 	}
+
 	return true
 }
 
@@ -199,13 +210,13 @@ func controllerLoop(board [][]bool, startTurn, height, width, maxTurns, threads 
 		case <-ticker.C:
 			println("Telling controller number of cells alive")
 			// Make the RPC call
-			err := controller.Call(stubs.ControllerReportAliveCells,
-				stubs.AliveCellsReport{CompletedTurns: turn, NumAlive: len(util.GetAliveCells(board))}, &stubs.Empty{})
+			controller.Go(stubs.ControllerReportAliveCells,
+				stubs.AliveCellsReport{CompletedTurns: turn, NumAlive: len(util.GetAliveCells(board))}, &stubs.Empty{}, nil)
 			// If there was an error then the client has disconnected, stop the game
-			if err != nil {
-				fmt.Println("Error sending num alive ", err)
-				return
-			}
+			// if err != nil {
+			// 	fmt.Println("Error sending num alive ", err)
+			// 	return
+			// }
 		// If there are no other interruptions, handle the game turn
 		default:
 			// Get the next board state (this will send calls to workers)
@@ -497,7 +508,7 @@ func main() {
 	rpc.Register(&Server{})
 
 	// Create a listener to handle rpc requests
-	ln, _ := net.Listen("tcp", "localhost:"+*portPtr)
+	ln, _ := net.Listen("tcp", ":"+*portPtr)
 	listener = ln
 
 	// This will block until the listener is closed

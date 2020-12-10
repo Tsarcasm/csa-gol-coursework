@@ -167,7 +167,7 @@ func controller(p Params, c controllerChannels) {
 	controllerRPC.Register(&controller)
 
 	// Start a listener to accept incoming RPC calls
-	listener, err := net.Listen("tcp", "localhost:"+p.Port)
+	listener, err := net.Listen("tcp", ":"+p.Port)
 	if err != nil {
 		println("Error starting listener:", err.Error())
 		return
@@ -207,7 +207,7 @@ func runGame(p Params, c controllerChannels, board [][]bool, controller Controll
 	try := 0
 	for try < 4 {
 		err = server.Call(stubs.ServerStartGame, stubs.StartGameRequest{
-			ControllerAddress: "localhost:" + p.Port,
+			ControllerAddress: p.OurIP + ":" + p.Port,
 			Height:            p.ImageHeight,
 			Width:             p.ImageWidth,
 			MaxTurns:          p.Turns,

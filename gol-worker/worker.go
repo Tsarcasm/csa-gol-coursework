@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"uk.ac.bris.cs/gameoflife/stubs"
+	"uk.ac.bris.cs/gameoflife/util"
 )
 
 // Global variables
@@ -42,7 +43,7 @@ func (w *Worker) Shutdown(req stubs.Empty, res *stubs.Empty) (err error) {
 }
 
 func main() {
-	// ip := util.GetPublicIP()
+	ip := util.GetPublicIP()
 	defer println("Closing worker")
 	// Read in the network port we should listen on, from the commandline argument.
 	portPtr := flag.String("p", "8010", "port to listen on")
@@ -51,8 +52,8 @@ func main() {
 
 	// Store addresses
 	flag.Parse()
-	// ourAddress = ip + ":" + *portPtr // "localhost:" + *portPtr
-	ourAddress = "localhost:" + *portPtr
+	ourAddress = ip + ":" + *portPtr // "localhost:" + *portPtr
+	// ourAddress = "localhost:" + *portPtr
 	serverAddress = *serverAddressPtr
 	println("Starting worker (" + ourAddress + ")")
 
@@ -60,7 +61,7 @@ func main() {
 	rpc.Register(&Worker{})
 
 	// Create a listener to handle rpc requests
-	listener, _ := net.Listen("tcp", ourAddress)
+	listener, _ := net.Listen("tcp", ":"+*portPtr)
 	defer listener.Close()
 	// Asynchronously handle RPC requests
 	go rpc.Accept(listener)
@@ -134,7 +135,7 @@ func connectToServer() bool {
 // Return a fragment of the board with the next turn's cells
 func doTurn(halo stubs.Halo, threads int) (boardFragment stubs.Fragment) {
 	width := halo.BitBoard.RowLength
-	board := halo.BitBoard.Bytes.Decode()
+	board := halo.BitBoard.Bytes
 	height := halo.EndPtr - halo.StartPtr
 	newBoard := make([][]bool, height)
 

@@ -70,7 +70,7 @@ func main() {
 	connectToServer()
 
 	// Ticker to ping the server every 10 seconds
-	pingTicker := time.NewTicker(2 * time.Second)
+	pingTicker := time.NewTicker(10 * time.Second)
 	for {
 		select {
 		// Ping the server at an interval

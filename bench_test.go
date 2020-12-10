@@ -8,10 +8,27 @@ import (
 	// "uk.ac.bris.cs/gameoflife/stubs"
 )
 
-func BenchmarkGol(b *testing.B) {
-	// os.Stdout = nil // Disable all program output apart from benchmark results
-	println("Test ", b.N)
-	benchmarkGol(b)
+func BenchmarkGolOffline(b *testing.B) {
+	benchmarkGol(b, gol.Params{
+		ImageWidth:  512,
+		ImageHeight: 512,
+		Turns:       1000,
+		Threads:     4,
+		ServerAddress: "localhost:8020",
+		VisualUpdates: false,
+		OurIP: "localhost",
+	})
+}
+func BenchmarkGolOnline(b *testing.B) {
+	benchmarkGol(b, gol.Params{
+		ImageWidth:  512,
+		ImageHeight: 512,
+		Turns:       1000,
+		Threads:     4,
+		ServerAddress: "54.156.128.45:8030",
+		VisualUpdates: false,
+		OurIP:         "185.164.183.135",
+	})
 }
 
 func BenchmarkRLE(b *testing.B) {
@@ -62,19 +79,11 @@ func randomiseBoard(board [][]bool, height, width int) {
 	}
 }
 
-func benchmarkGol(b *testing.B) {
-	params := gol.Params{
-		ImageWidth:    512,
-		ImageHeight:   512,
-		Turns:         1000,
-		Threads:       2,
-		ServerAddress: "54.156.128.45:8030",
-		VisualUpdates: false,
-		OurIP:         "185.164.183.135",
-	}
+func benchmarkGol(b *testing.B, p gol.Params) {
+
 	events := make(chan gol.Event)
 
-	gol.Run(params, events, nil)
+	gol.Run(p, events, nil)
 	for event := range events {
 		switch event.(type) {
 		case gol.FinalTurnComplete:

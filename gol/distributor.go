@@ -92,7 +92,7 @@ func gameLoop(board [][]bool, p Params, c distributorChannels) int {
 		// Every ticker tick send an AliveCellsCount event
 		case <-ticker.C:
 			c.events <- AliveCellsCount{
-				turn,
+				turn - 1,
 				len(getAliveCells(board)),
 			}
 			// Handle any keypresses

@@ -1,7 +1,6 @@
 package gol
 
 import (
-	// "fmt"
 	"fmt"
 	"io/ioutil"
 	"os"

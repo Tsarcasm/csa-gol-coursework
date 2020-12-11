@@ -118,9 +118,11 @@ func (c *Controller) SaveBoard(req stubs.BoardStateReport, res *stubs.Empty) (er
 func (c *Controller) ReportAliveCells(req stubs.AliveCellsReport, res *stubs.Empty) (err error) {
 	println("Received alive cells report")
 	println("Turn:", req.CompletedTurns, ",", req.NumAlive)
+	// Calculate the time difference between now and the last AliveCellsCount
 	now := time.Now()
 	turnsDiff := req.CompletedTurns - c.lastAliveTurn
 	timeDiff := now.Sub(c.lastAliveTime)
+	// Output turns / second
 	fmt.Printf("%.2f", float64(turnsDiff)/timeDiff.Seconds())
 	println(" turns/s")
 
@@ -182,17 +184,14 @@ func controller(p Params, c controllerChannels) {
 	// Block this routiune and handle incoming RPC calls
 	// This will return when the listener is closed
 	controllerRPC.Accept(listener)
-
+	
 	// At this point the game has ended
-	//Gracefully close everything
 
-	println()
-	time.Sleep(100 * time.Millisecond)
+	// Hold off so repeated tests don't cause issues with so many simultaneous connections
+	// We shouldn't have to do this but the RPC package has no way to gracefully shutdown
+	time.Sleep(400 * time.Millisecond)
 	c.ioCommand <- ioCheckIdle
 	<-c.ioIdle
-
-	// c.events <- StateChange{p.Turns, stubs.Quitting}
-
 	// Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
 	defer close(c.events)
 }

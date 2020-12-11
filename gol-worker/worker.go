@@ -42,16 +42,23 @@ func (w *Worker) Shutdown(req stubs.Empty, res *stubs.Empty) (err error) {
 
 // Main worker loop
 func main() {
-	ip := util.GetPublicIP()
 	defer println("Closing worker")
 	// Read in the network port we should listen on, from the commandline argument.
 	portPtr := flag.String("p", "8010", "port to listen on")
+	// Read in the localhost flag
+	localhost := flag.Bool("localhost", false, "set to true if we want to use localhost")
 	// Read in the network address of the server, from the commandline
 	serverAddressPtr := flag.String("s", "localhost:8020", "server address")
 
-	// Parse flags and store addresses
 	flag.Parse()
-	ourAddress = ip + ":" + *portPtr
+
+	// If the localhost flag is set, run on localhost
+	if *localhost {
+		ourAddress = "localhost:" + *portPtr
+	} else {
+		// Otherwise our address is our public IP
+		ourAddress = util.GetPublicIP() + ":" + *portPtr
+	}
 	serverAddress = *serverAddressPtr
 	println("Starting worker (" + ourAddress + ")")
 

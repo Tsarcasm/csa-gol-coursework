@@ -1,6 +1,8 @@
 package gol
 
 import (
+	"os"
+
 	"uk.ac.bris.cs/gameoflife/util"
 )
 
@@ -17,6 +19,11 @@ type Params struct {
 	ResumeGame    bool
 }
 
+// Find the server address as an env variable
+func getServerAddressFromEnvs() string {
+	return os.Getenv("GOL_SERVER")
+}
+
 // Run starts the processing of Game of Life. It should initialise channels and goroutines.
 func Run(p Params, events chan<- Event, keyPresses <-chan rune) {
 	// Get our public IP address
@@ -29,8 +36,8 @@ func Run(p Params, events chan<- Event, keyPresses <-chan rune) {
 		p.Port = "8050"
 	}
 	if p.ServerAddress == "" {
-		// Default to the flexible IP address of the AWS server instance
-		p.ServerAddress = "54.156.128.45:8030"
+		// If flags haven't been properly read (like in testing) then try and get the address from here
+		p.ServerAddress = getServerAddressFromEnvs()
 	}
 
 	ioCommand := make(chan ioCommand)

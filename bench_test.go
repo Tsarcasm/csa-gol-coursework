@@ -84,7 +84,6 @@ func benchmarkGol(b *testing.B, p gol.Params) {
 	for event := range events {
 		switch event.(type) {
 		case gol.FinalTurnComplete:
-			// print(e.Alive)
 		}
 	}
 }

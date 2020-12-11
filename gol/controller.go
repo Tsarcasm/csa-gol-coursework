@@ -1,15 +1,10 @@
 package gol
 
 import (
-	// "fmt"
 	"fmt"
 	"net"
 	"net/rpc"
 	"time"
-
-	// "time"
-
-	// "os"
 	"strconv"
 
 	"uk.ac.bris.cs/gameoflife/stubs"

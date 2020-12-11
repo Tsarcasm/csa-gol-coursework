@@ -35,6 +35,7 @@ type Controller struct {
 	state    stubs.State
 	previous [][]bool
 
+	timeoutTimer  *time.Timer
 	lastAliveTurn int
 	lastAliveTime time.Time
 	// A value is sent down this channel when it is time to close the controller
@@ -76,6 +77,9 @@ func (c *Controller) FinalTurnComplete(req stubs.BoardStateReport, res *stubs.Em
 // TurnComplete is called by the server when a turn has been completed
 // It contains a copy of the board on this turn so we can display it
 func (c *Controller) TurnComplete(req stubs.BoardStateReport, res *stubs.Empty) (err error) {
+	// Reset the timeout timer
+	c.timeoutTimer.Reset(5 * time.Second)
+
 	// If any cells have changed then send a cellflipped event
 	board := req.Board.ToSlice()
 	for row := 0; row < req.Board.NumRows; row++ {
@@ -116,6 +120,9 @@ func (c *Controller) SaveBoard(req stubs.BoardStateReport, res *stubs.Empty) (er
 // ReportAliveCells is called by the server to report how many cells are alive
 // This is usually called at regular intervals
 func (c *Controller) ReportAliveCells(req stubs.AliveCellsReport, res *stubs.Empty) (err error) {
+	// Reset the timeout timer
+	c.timeoutTimer.Reset(5 * time.Second)
+
 	println("Received alive cells report")
 	println("Turn:", req.CompletedTurns, ",", req.NumAlive)
 	// Calculate the time difference between now and the last AliveCellsCount
@@ -163,6 +170,7 @@ func controller(p Params, c controllerChannels) {
 		state:    stubs.Executing,
 		previous: nil,
 
+		timeoutTimer:  time.NewTimer(5 * time.Second),
 		lastAliveTurn: 0,
 		lastAliveTime: time.Now(),
 
@@ -184,7 +192,7 @@ func controller(p Params, c controllerChannels) {
 	// Block this routiune and handle incoming RPC calls
 	// This will return when the listener is closed
 	controllerRPC.Accept(listener)
-	
+
 	// At this point the game has ended
 
 	// Hold off so repeated tests don't cause issues with so many simultaneous connections
@@ -262,6 +270,10 @@ func runGame(p Params, c controllerChannels, board [][]bool, controller Controll
 			if err != nil {
 				println("Error sending keypress to server:", err.Error())
 			}
+		case <-controller.timeoutTimer.C:
+			// We timed out
+			println("Timed out waiting for an AliveCellCount")
+			return
 		case <-controller.stopChan:
 			// If we receive a stop signal then exit the game loop
 			println("Received stop signal")

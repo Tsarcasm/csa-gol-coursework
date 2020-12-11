@@ -68,10 +68,8 @@ func (c *Controller) FinalTurnComplete(req stubs.SaveBoardRequest, res *stubs.Em
 		Alive:          util.GetAliveCells(req.Board.ToSlice()),
 	}
 
-	//todo re-enable board saving on last turn
-
+	// Save the board
 	go saveBoard(req.Board.ToSlice(), req.CompletedTurns, c.params, c.channels)
-	// defer func() { c.stopChan <- true }()
 	c.stopChan <- true
 	return
 }

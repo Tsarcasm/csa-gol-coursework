@@ -1,9 +1,6 @@
 package gol
 
 import (
-	"fmt"
-	"net/http"
-
 	"uk.ac.bris.cs/gameoflife/util"
 )
 
@@ -20,27 +17,19 @@ type Params struct {
 	ResumeGame    bool
 }
 
-func HelloServer(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, "Hello, test")
-}
-
 // Run starts the processing of Game of Life. It should initialise channels and goroutines.
 func Run(p Params, events chan<- Event, keyPresses <-chan rune) {
 	// Get our public IP address
 	if p.OurIP == "" {
 		p.OurIP = util.GetPublicIP()
 	}
-	println(p.OurIP)
-	// http.HandleFunc("/", HelloServer)
-	// err := http.ListenAndServe(":8030", nil)
-	// println(err.Error())
-	// for {
-	// }
+	println("Our IP Address: ", p.OurIP)
 	// If params doesn't have defaults for network connections, set them
 	if p.Port == "" {
 		p.Port = "8050"
 	}
 	if p.ServerAddress == "" {
+		// Default to the flexible IP address of the AWS server instance
 		p.ServerAddress = "54.156.128.45:8030"
 	}
 

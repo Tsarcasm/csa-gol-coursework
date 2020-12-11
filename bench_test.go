@@ -5,26 +5,27 @@ import (
 	"testing"
 
 	"uk.ac.bris.cs/gameoflife/gol"
+	"uk.ac.bris.cs/gameoflife/stubs"
 	// "uk.ac.bris.cs/gameoflife/stubs"
 )
 
 func BenchmarkGolOffline(b *testing.B) {
 	benchmarkGol(b, gol.Params{
-		ImageWidth:  512,
-		ImageHeight: 512,
-		Turns:       1000,
-		Threads:     4,
+		ImageWidth:    512,
+		ImageHeight:   512,
+		Turns:         1000,
+		Threads:       1,
 		ServerAddress: "localhost:8020",
 		VisualUpdates: false,
-		OurIP: "localhost",
+		OurIP:         "localhost",
 	})
 }
 func BenchmarkGolOnline(b *testing.B) {
 	benchmarkGol(b, gol.Params{
-		ImageWidth:  512,
-		ImageHeight: 512,
-		Turns:       1000,
-		Threads:     4,
+		ImageWidth:    512,
+		ImageHeight:   512,
+		Turns:         1000,
+		Threads:       1,
 		ServerAddress: "54.156.128.45:8030",
 		VisualUpdates: false,
 		OurIP:         "185.164.183.135",
@@ -33,16 +34,12 @@ func BenchmarkGolOnline(b *testing.B) {
 
 func BenchmarkRLE(b *testing.B) {
 	// Make a random board
-	// size := 512
-	// board := make([][]bool, size)
-	// makeBoard(size, board)
-	// return
-	bit := 1233
-	for i := 0; i < 1000000000; i++ {
-		// _ = stubs.BitBoardFromSlice(board, size, size)
-		// bitboard.Bytes.Decode()
-		_ = bit % 7
-	}
+	size := 512
+	board := make([][]bool, size)
+	makeBoard(size, board)
+	println("BitArray size: ", (size*size)/8)
+	bitboard := stubs.BitBoardFromSlice(board, size, size)
+	println("BitBoard size: ", len(bitboard.Bytes.Runs))
 
 }
 
@@ -53,7 +50,7 @@ func makeBoard(size int, board [][]bool) {
 
 			r := rand.Float32()
 
-			ratio := float32(0.2)
+			ratio := float32(0.05)
 			if r < ratio {
 				board[row][col] = true
 			} else {

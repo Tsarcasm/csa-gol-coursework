@@ -130,6 +130,10 @@ func updateBoard(board [][]bool, newBoard [][]bool, height, width int, threads i
 
 	// Calculate the number of rows each worker thread should use
 	numWorkers := len(workers)
+	// don't allow more workers than rows
+	if numWorkers > height {
+		numWorkers = height
+	}
 	fragHeight := height / numWorkers
 	// The waitgroup will wait for all workers to finish
 	wg.Add(numWorkers)

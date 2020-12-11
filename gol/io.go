@@ -6,9 +6,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-
-	"github.com/cheggaaa/pb/v3"
-
 	"uk.ac.bris.cs/gameoflife/util"
 )
 
@@ -124,14 +121,9 @@ func (io *ioState) readPgmImage() {
 	}
 
 	image := []byte(fields[4])
-	len := len(image)
-	print(len)
-	bar := pb.StartNew(len)
 	for _, b := range image {
 		io.channels.input <- b
-		bar.Increment()
 	}
-	bar.Finish()
 
 	fmt.Println("File", filename, "input done!")
 }

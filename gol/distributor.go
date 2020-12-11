@@ -3,7 +3,6 @@ package gol
 import (
 	"fmt"
 	"strconv"
-
 	"time"
 
 	"uk.ac.bris.cs/gameoflife/util"
@@ -39,6 +38,7 @@ func distributor(p Params, c distributorChannels) {
 		board[row] = make([]bool, p.ImageWidth)
 	}
 
+	// Populate the board from the file
 	loadBoard(c, p, board)
 
 	// Send an event since the board has now been setup
@@ -138,7 +138,7 @@ func doTurn(board, boardBuffer [][]bool, turn, fragHeight int, p Params, events 
 		if thread == p.Threads-1 {
 			end = p.ImageHeight
 		}
-
+		// Start the gorountine
 		go workerThread(board, turn, events, start, end, boardFragments)
 	}
 
@@ -202,7 +202,7 @@ func workerThread(board [][]bool, turn int, events chan<- Event, startRow, endRo
 // This will properly prepare all the channels for writing
 func saveBoard(board [][]bool, turn int, p Params, c distributorChannels) {
 	filename := strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight) + "x" + strconv.Itoa(turn)
-	// fmt.Println("Saving to file", filename)
+	fmt.Println("Saving to file", filename)
 
 	// Set the IO channels to prepare for writing
 	c.ioCommand <- ioOutput
@@ -215,7 +215,7 @@ func saveBoard(board [][]bool, turn int, p Params, c distributorChannels) {
 // This will properly prepare all the channels for reading
 func loadBoard(c distributorChannels, p Params, board [][]bool) {
 	filename := strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight)
-	// fmt.Println("Reading in file", filename)
+	fmt.Println("Reading in file", filename)
 
 	// Set the IO channels to prepare for reading
 	c.ioCommand <- ioInput

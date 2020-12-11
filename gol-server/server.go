@@ -221,7 +221,6 @@ func controllerLoop(board [][]bool, startTurn, height, width, maxTurns, threads 
 					copy(board[row], newBoard[row])
 				}
 				if visualUpdates {
-					// println("Sending turn complete")
 					// Tell the controller we have completed a turn
 					// Do this concurrently since we don't need to wait for the controller
 					controller.Call(stubs.ControllerTurnComplete,

@@ -3,8 +3,8 @@ package gol
 import (
 	"fmt"
 
-	"uk.ac.bris.cs/gameoflife/util"
 	"uk.ac.bris.cs/gameoflife/stubs"
+	"uk.ac.bris.cs/gameoflife/util"
 )
 
 // Event represents any Game of Life event that needs to be communicated to the user.
@@ -29,7 +29,6 @@ type ImageOutputComplete struct { // implements Event
 	CompletedTurns int
 	Filename       string
 }
-
 
 // StateChange is an Event notifying the user about the change of state of execution.
 // This Event should be sent every time the execution is paused, resumed or quit.
@@ -60,15 +59,6 @@ type FinalTurnComplete struct {
 	CompletedTurns int
 	Alive          []util.Cell
 }
-
-// todo description
-// Responds with board data for a save
-type BoardSave struct {
-	CompletedTurns int
-	Board          [][]bool
-}
-
-
 
 func (event StateChange) String() string {
 	return fmt.Sprintf("%v", event.NewState)
@@ -115,14 +105,6 @@ func (event FinalTurnComplete) String() string {
 }
 
 func (event FinalTurnComplete) GetCompletedTurns() int {
-	return event.CompletedTurns
-}
-
-func (event BoardSave) String() string {
-	return fmt.Sprintf("")
-}
-
-func (event BoardSave) GetCompletedTurns() int {
 	return event.CompletedTurns
 }
 

@@ -2,6 +2,7 @@ package gol
 
 import (
 	// "fmt"
+	"fmt"
 	"net"
 	"net/rpc"
 	"time"
@@ -14,8 +15,6 @@ import (
 	"uk.ac.bris.cs/gameoflife/stubs"
 	"uk.ac.bris.cs/gameoflife/util"
 )
-
-//todo: comment this file
 
 // Channel Container structure
 type controllerChannels struct {
@@ -117,13 +116,13 @@ func (c *Controller) SaveBoard(req stubs.BoardStateReport, res *stubs.Empty) (er
 // ReportAliveCells is called by the server to report how many cells are alive
 // This is usually called at regular intervals
 func (c *Controller) ReportAliveCells(req stubs.AliveCellsReport, res *stubs.Empty) (err error) {
-	// println("Received alive cells report")
-	// println("Turn:", req.CompletedTurns, ",", req.NumAlive)
+	println("Received alive cells report")
+	println("Turn:", req.CompletedTurns, ",", req.NumAlive)
 	now := time.Now()
-	// turnsDiff := req.CompletedTurns - c.lastAliveTurn
-	// timeDiff := now.Sub(c.lastAliveTime)
-	// fmt.Printf("%.2f", float64(turnsDiff)/timeDiff.Seconds())
-	// println(" turns/s")
+	turnsDiff := req.CompletedTurns - c.lastAliveTurn
+	timeDiff := now.Sub(c.lastAliveTime)
+	fmt.Printf("%.2f", float64(turnsDiff)/timeDiff.Seconds())
+	println(" turns/s")
 
 	c.lastAliveTime = now
 	c.lastAliveTurn = req.CompletedTurns

@@ -186,7 +186,7 @@ func controllerLoop(board [][]bool, startTurn, height, width, maxTurns, threads 
 	// If the controller wants visual updates, send them the first turn
 	if visualUpdates {
 		controller.Call(stubs.ControllerTurnComplete,
-			stubs.SaveBoardRequest{CompletedTurns: turn, Board: stubs.BitBoardFromSlice(board, height, width)}, &stubs.Empty{})
+			stubs.BoardStateReport{CompletedTurns: turn, Board: stubs.BitBoardFromSlice(board, height, width)}, &stubs.Empty{})
 	}
 
 	// Update the board each turn
@@ -225,7 +225,7 @@ func controllerLoop(board [][]bool, startTurn, height, width, maxTurns, threads 
 					// Tell the controller we have completed a turn
 					// Do this concurrently since we don't need to wait for the controller
 					controller.Call(stubs.ControllerTurnComplete,
-						stubs.SaveBoardRequest{CompletedTurns: turn, Board: stubs.BitBoardFromSlice(board, height, width)}, &stubs.Empty{})
+						stubs.BoardStateReport{CompletedTurns: turn, Board: stubs.BitBoardFromSlice(board, height, width)}, &stubs.Empty{})
 				}
 				turn++
 
@@ -245,7 +245,7 @@ func controllerLoop(board [][]bool, startTurn, height, width, maxTurns, threads 
 	println("All turns done, send final turn complete")
 	// Once all turns are done, tell the controller the final turn is complete
 	err := controller.Call(stubs.ControllerFinalTurnComplete,
-		stubs.SaveBoardRequest{
+		stubs.BoardStateReport{
 			CompletedTurns: maxTurns,
 			Board:          stubs.BitBoardFromSlice(board, height, width),
 		},
@@ -284,7 +284,7 @@ func handleKeypress(key rune, turn int, board [][]bool, height, width int) bool 
 		println("Telling controller to save board")
 
 		controller.Call(stubs.ControllerSaveBoard,
-			stubs.SaveBoardRequest{CompletedTurns: turn, Board: stubs.BitBoardFromSlice(board, height, width)}, &stubs.Empty{})
+			stubs.BoardStateReport{CompletedTurns: turn, Board: stubs.BitBoardFromSlice(board, height, width)}, &stubs.Empty{})
 	case 'k':
 		// Shutdown system: disconnect controller, shutdown workers and ourself
 		println("Controller wants to close everything")
@@ -299,7 +299,7 @@ func handleKeypress(key rune, turn int, board [][]bool, height, width int) bool 
 
 		// Disconnect the controller
 		controller.Call(stubs.ControllerFinalTurnComplete,
-			stubs.SaveBoardRequest{
+			stubs.BoardStateReport{
 				CompletedTurns: turn,
 				Board:          stubs.BitBoardFromSlice(board, height, width),
 			},

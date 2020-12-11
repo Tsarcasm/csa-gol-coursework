@@ -110,8 +110,8 @@ type TurnCompleteReport struct {
 	CompletedTurns int
 }
 
-// SaveBoardRequest is passed to the controller to ask them to save the board
-type SaveBoardRequest struct {
+// BoardStateReport is passed to the controller to give them the state of the board
+type BoardStateReport struct {
 	CompletedTurns int
 
 	Board *BitBoard

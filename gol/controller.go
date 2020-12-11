@@ -60,7 +60,7 @@ func (c *Controller) GameStateChange(req stubs.StateChangeReport, res *stubs.Emp
 
 // FinalTurnComplete is called by the server when it has processed all turns
 // It will send the final board which can then be saved
-func (c *Controller) FinalTurnComplete(req stubs.SaveBoardRequest, res *stubs.Empty) (err error) {
+func (c *Controller) FinalTurnComplete(req stubs.BoardStateReport, res *stubs.Empty) (err error) {
 	println("Final turn complete")
 	// Send an event
 	c.channels.events <- FinalTurnComplete{
@@ -76,7 +76,7 @@ func (c *Controller) FinalTurnComplete(req stubs.SaveBoardRequest, res *stubs.Em
 
 // TurnComplete is called by the server when a turn has been completed
 // It contains a copy of the board on this turn so we can display it
-func (c *Controller) TurnComplete(req stubs.SaveBoardRequest, res *stubs.Empty) (err error) {
+func (c *Controller) TurnComplete(req stubs.BoardStateReport, res *stubs.Empty) (err error) {
 	// If any cells have changed then send a cellflipped event
 	board := req.Board.ToSlice()
 	for row := 0; row < req.Board.NumRows; row++ {
@@ -107,7 +107,7 @@ func (c *Controller) TurnComplete(req stubs.SaveBoardRequest, res *stubs.Empty) 
 }
 
 // SaveBoard is called by the server when it wants us to save the board (e.g. if we send an 's' key)
-func (c *Controller) SaveBoard(req stubs.SaveBoardRequest, res *stubs.Empty) (err error) {
+func (c *Controller) SaveBoard(req stubs.BoardStateReport, res *stubs.Empty) (err error) {
 	println("Received save board request")
 	// Save the board
 	go saveBoard(req.Board.ToSlice(), req.CompletedTurns, c.params, c.channels)

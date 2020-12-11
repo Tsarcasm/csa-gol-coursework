@@ -18,9 +18,7 @@ import (
 
 // Send a portion of the board to a worker to process the turn for
 // When we get a fragment back, send it down the frag channel
-func doWorker(halo stubs.Halo, newBoard [][]bool, threads int, worker *worker, wg *sync.WaitGroup, failChan chan<- bool, fragChan chan<- stubs.Fragment) {
-	defer wg.Done()
-
+func doWorker(halo stubs.Halo, newBoard [][]bool, threads int, worker *worker, failChan chan<- bool, fragChan chan<- stubs.Fragment) {
 	response := stubs.DoTurnResponse{}
 
 	// Send the halo to the client, get the result
@@ -98,6 +96,10 @@ func updateBoard(board [][]bool, newBoard [][]bool, height, width int, threads i
 
 	// Calculate the number of rows each worker thread should use
 	numWorkers := len(workers)
+	// Bail if we have no workers
+	if numWorkers == 0 {
+		return false
+	}
 	fragHeight := height / numWorkers
 	// The waitgroup will wait for all workers to finish
 	wg.Add(numWorkers)
@@ -109,7 +111,7 @@ func updateBoard(board [][]bool, newBoard [][]bool, height, width int, threads i
 			// Get all the cells required to update this fragment
 			halo := makeHalo(workerIdx, fragHeight, numWorkers, height, width, board)
 			// Send the fragment to the worker
-			doWorker(halo, newBoard, threads, worker, &wg, failChan, fragChan)
+			doWorker(halo, newBoard, threads, worker, failChan, fragChan)
 		}(w, thisWorker)
 	}
 
@@ -131,9 +133,6 @@ func updateBoard(board [][]bool, newBoard [][]bool, height, width int, threads i
 			i++
 		}
 	}
-
-	// Wait for all workers to finish
-	wg.Wait()
 
 	// Check that there have been no fails
 	if fail {
@@ -218,6 +217,9 @@ func controllerLoop(board [][]bool, startTurn, height, width, maxTurns, threads 
 				lastBoardState = board
 				lastTurn = turn
 			} else {
+				if len(workers) == 0 {
+					return
+				}
 				// We hit a problem (e.g. a worker disconnected)
 				// Retry the turn
 				println("Encountered a problem handling turn", turn)
